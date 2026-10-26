@@ -248,6 +248,9 @@ impl<'a> BlipStore<'a> {
     /// The blip `pib` names: the one its file block holds or, for a BSE that holds none,
     /// the blip record at its `foDelay` in `delay_stream`. A `pib` past the store, or a
     /// file block that is not a BSE and holds no blip, is [`Blip::Unsupported`].
+    ///
+    /// The picture bytes are borrowed: a caller that copies them counts the copy
+    /// against the content budget.
     pub(crate) fn blip(
         &self,
         pib: u32,
@@ -278,9 +281,7 @@ impl<'a> BlipStore<'a> {
         else {
             return Ok(Blip::Unsupported);
         };
-        let bytes = delayed.bytes(delay_stream);
-        budget.account_text(bytes.len())?;
-        find_blip(bytes, formats, budget)
+        find_blip(delayed.bytes(delay_stream), formats, budget)
     }
 }
 

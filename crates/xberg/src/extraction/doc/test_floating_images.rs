@@ -495,16 +495,51 @@ async fn should_warn_and_preserve_native_text_when_floating_picture_records_are_
 
 #[tokio::test]
 async fn should_reject_floating_doc_picture_when_content_budget_is_exceeded() {
-    let (bytes, _) = floating_png_doc("\x08\r", true, Some(1));
+    for delayed in [true, false] {
+        let (bytes, _) = floating_png_doc("\x08\r", delayed, Some(1));
+        let mut config = image_config();
+        config.security_limits = Some(crate::extractors::security::SecurityLimits {
+            max_content_size: 16,
+            ..Default::default()
+        });
+        let result = DocExtractor::new()
+            .extract_content(&bytes, "application/msword", &config)
+            .await;
+        assert!(
+            matches!(result, Err(crate::XbergError::Validation { .. })),
+            "delayed {delayed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn should_count_every_floating_doc_picture_copy_against_the_content_budget() {
+    let picture = png(WHITE);
     let mut config = image_config();
+    // Room for one copy of the picture, not for two. ~keep
     config.security_limits = Some(crate::extractors::security::SecurityLimits {
-        max_content_size: 16,
+        max_content_size: picture.len() * 3 / 2,
         ..Default::default()
     });
-    let result = DocExtractor::new()
-        .extract_content(&bytes, "application/msword", &config)
-        .await;
-    assert!(matches!(result, Err(crate::XbergError::Validation { .. })));
+    for delayed in [true, false] {
+        for anchors in [1, 2] {
+            let text = format!("BEFORE\r{}\rAFTER\r", "\x08".repeat(anchors));
+            let bytes = FloatingDoc {
+                delayed,
+                pibs: vec![Some(1); anchors],
+                ..FloatingDoc::new(&text)
+            }
+            .build();
+            let result = DocExtractor::new()
+                .extract_content(&bytes, "application/msword", &config)
+                .await;
+            let context = format!("delayed {delayed}, {anchors} anchors");
+            match anchors {
+                1 => assert_eq!(result.expect(&context).images.len(), 1, "{context}"),
+                _ => assert!(matches!(result, Err(crate::XbergError::Validation { .. })), "{context}"),
+            }
+        }
+    }
 }
 
 #[cfg(all(feature = "ocr", feature = "tokio-runtime"))]

@@ -370,6 +370,10 @@ impl<'a> Drawings<'a> {
             .blips
             .blip(pib, self.word_doc, PICTURE_FORMATS, budget)
             .map_err(validation)?;
+        // Each anchor gets its own copy of the picture, so each copy counts. ~keep
+        if let Blip::Image(_, bytes) = blip {
+            budget.account_text(bytes.len()).map_err(validation)?;
+        }
         Ok(blip.into())
     }
 }
