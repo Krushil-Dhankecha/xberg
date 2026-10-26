@@ -1,6 +1,8 @@
 //! Floating pictures: a main-document `\x08` anchor whose `PlcSpaMom` shape names a blip.
 
-use super::test_images::{WHITE, change_stream, image_config, picture_doc, png};
+use super::test_images::{
+    IN_LIST, IN_TABLE, WHITE, change_stream, image_config, picture_doc, png, with_paragraph_property,
+};
 use super::tests::{
     TestPiece, build_doc_ole, build_fib, build_plc_pcd, build_table_stream, compressed_fc, test_rg_fc_lcb_offset,
     write_u32,
@@ -33,15 +35,20 @@ fn utf16(text: &str) -> TextPiece {
     TextPiece::Utf16(text.encode_utf16().collect())
 }
 
-/// A main-document floating shape anchored at the text's `\x08`: `PlcSpaMom` names
-/// its shape, whose `pib` selects one of `images`, each a BSE in the drawing group's
-/// BStore. `delayed` stores each blip in the WordDocument stream at its BSE's
+/// Main-document floating shapes, one anchored at each `\x08` of the text: `PlcSpaMom`
+/// names each shape, whose `pib` selects one of `images`, each a BSE in the drawing
+/// group's BStore. `delayed` stores each blip in the WordDocument stream at its BSE's
 /// `foDelay`, as Word does; otherwise the blip follows its BSE inside the BStore.
 struct FloatingDoc {
     pieces: Vec<TextPiece>,
     images: Vec<Vec<u8>>,
     delayed: bool,
-    pib: Option<u32>,
+    /// The `pib` of the shape at each anchor, in text order; `None` for a shape
+    /// without a picture.
+    pibs: Vec<Option<u32>>,
+    /// The shapes of a header drawing (`dgglbl` 1) put before the main document's,
+    /// with the same spids; empty for none.
+    header_pibs: Vec<Option<u32>>,
 }
 
 impl FloatingDoc {
@@ -50,14 +57,17 @@ impl FloatingDoc {
             pieces: vec![utf16(text)],
             images: vec![png(WHITE)],
             delayed: true,
-            pib: Some(1),
+            pibs: vec![Some(1)],
+            header_pibs: Vec::new(),
         }
     }
 
+    /// The spid of the shape at the first anchor; the next anchors' follow it.
     const SPID: u32 = 1026;
 
     fn build(&self) -> Vec<u8> {
-        let (mut word, pieces, anchor, ccp) = self.main_text();
+        let (mut word, pieces, anchors, ccp) = self.main_text();
+        assert_eq!(anchors.len(), self.pibs.len(), "one shape per anchor");
         let mut table = build_table_stream(&mut word, &build_plc_pcd(&pieces));
         let content = self.office_art_content(&mut word);
         let dgg_info = table.len();
@@ -66,19 +76,26 @@ impl FloatingDoc {
         write_u32(&mut word, test_rg_fc_lcb_offset() + 50 * 8 + 4, content.len() as u32);
 
         let plc_spa = table.len();
-        table.extend_from_slice(&(anchor as u32).to_le_bytes());
-        table.extend_from_slice(&(ccp as u32).to_le_bytes());
-        let mut spa = vec![0u8; 26];
-        write_u32(&mut spa, 0, Self::SPID);
-        table.extend_from_slice(&spa);
+        for cp in anchors.iter().chain([&ccp]) {
+            table.extend_from_slice(&(*cp as u32).to_le_bytes());
+        }
+        for index in 0..anchors.len() {
+            let mut spa = vec![0u8; 26];
+            write_u32(&mut spa, 0, Self::SPID + index as u32);
+            table.extend_from_slice(&spa);
+        }
         write_u32(&mut word, test_rg_fc_lcb_offset() + 40 * 8, plc_spa as u32);
-        write_u32(&mut word, test_rg_fc_lcb_offset() + 40 * 8 + 4, 34);
+        write_u32(
+            &mut word,
+            test_rg_fc_lcb_offset() + 40 * 8 + 4,
+            (table.len() - plc_spa) as u32,
+        );
         build_doc_ole(&word, &table)
     }
 
-    /// The WordDocument stream holding the main text, its pieces, the anchor's CP and
+    /// The WordDocument stream holding the main text, its pieces, the anchors' CPs and
     /// the text's length in CPs.
-    fn main_text(&self) -> (Vec<u8>, Vec<TestPiece>, usize, usize) {
+    fn main_text(&self) -> (Vec<u8>, Vec<TestPiece>, Vec<usize>, usize) {
         let ccp = self
             .pieces
             .iter()
@@ -88,7 +105,7 @@ impl FloatingDoc {
             })
             .sum::<usize>();
         let mut word = build_fib(2048, ccp as u32, 0, 0, 0);
-        let (mut fc, mut cp, mut anchor) = (1024, 0, None);
+        let (mut fc, mut cp, mut anchors) = (1024, 0, Vec::new());
         let mut pieces = Vec::new();
         for piece in &self.pieces {
             let (bytes, units, fc_raw) = match piece {
@@ -103,9 +120,11 @@ impl FloatingDoc {
                     compressed_fc(fc as u32),
                 ),
             };
-            if let Some(index) = units.iter().position(|&unit| unit == 0x08) {
-                anchor.get_or_insert(cp + index);
-            }
+            anchors.extend(
+                (0..units.len())
+                    .filter(|&index| units[index] == 0x08)
+                    .map(|index| cp + index),
+            );
             word[fc..fc + bytes.len()].copy_from_slice(&bytes);
             pieces.push(TestPiece {
                 cp_start: cp as u32,
@@ -115,11 +134,12 @@ impl FloatingDoc {
             fc += bytes.len();
             cp += units.len();
         }
-        (word, pieces, anchor.expect("floating anchor"), ccp)
+        (word, pieces, anchors, ccp)
     }
 
-    /// `OfficeArtContent`: the drawing group, one BSE per image, then the main
-    /// document's drawing. A delayed blip goes at the end of `word`.
+    /// `OfficeArtContent`: the drawing group, one BSE per image, then the header
+    /// drawing if any and the main document's drawing. A delayed blip goes at the end
+    /// of `word`.
     fn office_art_content(&self, word: &mut Vec<u8>) -> Vec<u8> {
         let mut blocks = Vec::new();
         for image in &self.images {
@@ -140,24 +160,36 @@ impl FloatingDoc {
         let count = self.images.len() as u16;
         let bstore = office_art_record((count << 4) | 0xf, MSOFBT_BSTORE_CONTAINER, &blocks);
         let mut content = office_art_record(0x000f, MSOFBT_DGG_CONTAINER, &bstore);
-        let fsp = [Self::SPID.to_le_bytes(), 0x0a00u32.to_le_bytes()].concat();
-        let mut shape = office_art_record(0x0002, MSOFBT_FSP, &fsp);
-        if let Some(pib) = self.pib {
-            let property = [(MSO_PROPERTY_PIB | 0x4000).to_le_bytes().as_slice(), &pib.to_le_bytes()].concat();
-            shape.extend(office_art_record(0x0013, MSOFBT_OPT[0], &property));
+        if !self.header_pibs.is_empty() {
+            content.push(1);
+            content.extend(Self::drawing(&self.header_pibs));
         }
-        let shape = office_art_record(0x000f, MSOFBT_SP_CONTAINER, &shape);
-        let group = office_art_record(0x000f, MSOFBT_SPGR_CONTAINER, &shape);
         content.push(0);
-        content.extend(office_art_record(0x000f, MSOFBT_DG_CONTAINER, &group));
+        content.extend(Self::drawing(&self.pibs));
         content
+    }
+
+    /// An `OfficeArtDgContainer` with one shape per entry of `pibs`, from `SPID` on.
+    fn drawing(pibs: &[Option<u32>]) -> Vec<u8> {
+        let mut shapes = Vec::new();
+        for (index, pib) in pibs.iter().enumerate() {
+            let fsp = [(Self::SPID + index as u32).to_le_bytes(), 0x0a00u32.to_le_bytes()].concat();
+            let mut shape = office_art_record(0x0002, MSOFBT_FSP, &fsp);
+            if let Some(pib) = pib {
+                let property = [(MSO_PROPERTY_PIB | 0x4000).to_le_bytes().as_slice(), &pib.to_le_bytes()].concat();
+                shape.extend(office_art_record(0x0013, MSOFBT_OPT[0], &property));
+            }
+            shapes.extend(office_art_record(0x000f, MSOFBT_SP_CONTAINER, &shape));
+        }
+        let group = office_art_record(0x000f, MSOFBT_SPGR_CONTAINER, &shapes);
+        office_art_record(0x000f, MSOFBT_DG_CONTAINER, &group)
     }
 }
 
 fn floating_png_doc(text: &str, delayed: bool, pib: Option<u32>) -> (Vec<u8>, Vec<u8>) {
     let doc = FloatingDoc {
         delayed,
-        pib,
+        pibs: vec![pib],
         ..FloatingDoc::new(text)
     };
     (doc.build(), doc.images[0].clone())
@@ -251,7 +283,7 @@ async fn should_extract_the_floating_doc_picture_its_pib_selects() {
         let source = FloatingDoc {
             images: vec![png(WHITE), png([0, 0, 0])],
             delayed,
-            pib: Some(2),
+            pibs: vec![Some(2)],
             ..FloatingDoc::new("BEFORE\r\x08\rAFTER\r")
         };
         let doc = extract_floating(&source.build()).await;
@@ -290,6 +322,75 @@ async fn should_skip_floating_doc_shapes_without_a_picture_silently() {
     assert_eq!(doc.images.len(), 0);
     assert_eq!(doc.processing_warnings.len(), 0);
     assert_eq!(texts(&doc), ["BEFORE", "AFTER"]);
+}
+
+#[tokio::test]
+async fn should_read_floating_doc_shapes_from_the_main_document_drawing() {
+    // The header drawing comes first and gives the same spid another picture. ~keep
+    let source = FloatingDoc {
+        images: vec![png(WHITE), png([0, 0, 0])],
+        header_pibs: vec![Some(2)],
+        ..FloatingDoc::new("BEFORE\r\x08\rAFTER\r")
+    };
+    let doc = extract_floating(&source.build()).await;
+    assert_picture_between_paragraphs(&doc, "header drawing first");
+    assert_eq!(doc.images[0].data.as_ref(), source.images[0].as_slice());
+}
+
+#[tokio::test]
+async fn should_warn_for_floating_doc_pictures_in_table_cells_and_lists() {
+    let text = "BEFORE\x08\r";
+    for property in [IN_TABLE.as_slice(), IN_LIST.as_slice()] {
+        // The paragraph property rewrites the WordDocument stream past the text, where
+        // a delayed blip would go. ~keep
+        let bytes = FloatingDoc {
+            delayed: false,
+            ..FloatingDoc::new(text)
+        }
+        .build();
+        let bytes = with_paragraph_property(bytes, text, property);
+        let doc = extract_floating(&bytes).await;
+        assert_eq!(doc.images.len(), 0, "{property:?}");
+        assert_eq!(doc.processing_warnings.len(), 1, "{property:?}");
+        assert!(
+            doc.processing_warnings[0]
+                .message
+                .contains("table cells or automatic lists"),
+            "{property:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn should_count_only_floating_doc_shapes_that_are_pictures_towards_the_file_limit() {
+    let mut config = image_config();
+    config.security_limits = Some(crate::extractors::security::SecurityLimits {
+        max_files_in_archive: 1,
+        ..Default::default()
+    });
+    let extract = |pibs: Vec<Option<u32>>| {
+        let text = format!("BEFORE\r{}\rAFTER\r", "\x08".repeat(pibs.len()));
+        let bytes = FloatingDoc {
+            pibs,
+            ..FloatingDoc::new(&text)
+        }
+        .build();
+        let config = config.clone();
+        async move {
+            DocExtractor::new()
+                .extract_content(&bytes, "application/msword", &config)
+                .await
+        }
+    };
+
+    let doc = extract(vec![None, None, Some(1)]).await.expect("one picture");
+    assert_eq!(doc.processing_warnings.len(), 0, "{:?}", doc.processing_warnings);
+    assert_eq!(doc.images.len(), 1);
+    let error = extract(vec![Some(1), Some(1)]).await.expect_err("two pictures");
+    assert!(
+        error.to_string().contains("DOC embedded picture count exceeds"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -340,10 +441,18 @@ async fn should_warn_and_preserve_native_text_when_floating_picture_records_are_
     let text = "BEFORE\r\x08\rAFTER\r";
     let unsupported = "unsupported image format";
     let unresolved = "floating shape has no drawing record";
-    for (mutation, expected) in [unsupported, unsupported, unresolved, unresolved, unresolved]
-        .into_iter()
-        .enumerate()
-    {
+    // Give the one container record of type `from` the type `to`. ~keep
+    let retype = |table: &mut Vec<u8>, from: u16, to: u16| {
+        let header = [0x000fu16.to_le_bytes(), from.to_le_bytes()].concat();
+        let at = table
+            .windows(header.len())
+            .position(|window| window == header)
+            .expect("container record");
+        table[at + 2..at + 4].copy_from_slice(&to.to_le_bytes());
+    };
+    let mut expected = vec![unsupported; 2];
+    expected.resize(8, unresolved);
+    for (mutation, expected) in expected.into_iter().enumerate() {
         let (bytes, _) = floating_png_doc(text, true, Some(if mutation == 0 { 2 } else { 1 }));
         let bytes = match mutation {
             0 => bytes,
@@ -356,9 +465,21 @@ async fn should_warn_and_preserve_native_text_when_floating_picture_records_are_
                 let plc_spa = table.len() - 34;
                 write_u32(table, plc_spa, 3);
             }),
-            _ => change_stream(bytes, "/WordDocument", |word| {
+            4 => change_stream(bytes, "/WordDocument", |word| {
                 write_u32(word, test_rg_fc_lcb_offset() + 50 * 8 + 4, u32::MAX)
             }),
+            5 => change_stream(bytes, "/1Table", |table| {
+                retype(table, MSOFBT_DGG_CONTAINER, MSOFBT_BSTORE_CONTAINER)
+            }),
+            6 => change_stream(bytes, "/1Table", |table| {
+                retype(table, MSOFBT_DG_CONTAINER, MSOFBT_SPGR_CONTAINER)
+            }),
+            // A `PlcSpaMom` one byte longer than its whole entries, the byte present. ~keep
+            _ => change_stream(
+                change_stream(bytes, "/1Table", |table| table.push(0)),
+                "/WordDocument",
+                |word| write_u32(word, test_rg_fc_lcb_offset() + 40 * 8 + 4, 35),
+            ),
         };
         let doc = extract_floating(&bytes).await;
         assert_eq!(doc.images.len(), 0, "mutation {mutation}");
