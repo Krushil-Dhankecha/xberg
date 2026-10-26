@@ -126,9 +126,10 @@ fn push_piece_overrun_warning(
 }
 
 /// A decoded piece: its characters, plus for each character the byte offset
-/// (`FC`) in the WordDocument stream it was read from.
+/// (`FC`) in the WordDocument stream it was read from and its offset in the
+/// piece's CP range.
 ///
-/// The two vectors are always the same length. Paragraph properties are
+/// The vectors are always the same length. Paragraph properties are
 /// FC-addressed while text is CP-addressed, so #1550 needs this pairing to
 /// bind a paragraph to its `PAPX`; the uncompressed path can drop a code unit
 /// that is not a scalar value, which is why the offsets are recorded during
@@ -138,10 +139,15 @@ fn push_piece_overrun_warning(
 /// an FKP's `rgfc` entry stores for a paragraph. Recording the end during
 /// decoding avoids re-deriving it as `fc + 1`, which is only correct for
 /// compressed pieces -- an uncompressed character is two bytes wide. ~keep
+///
+/// `cp_offsets` is recorded for the same reason: floating shapes are
+/// CP-addressed (`PlcSpa`), and a dropped code unit shifts every later
+/// character's index away from its CP. ~keep
 #[derive(Default)]
 struct DecodedPiece {
     chars: Vec<char>,
     fc_ends: Vec<u32>,
+    cp_offsets: Vec<u32>,
 }
 
 impl DecodedPiece {
@@ -175,6 +181,7 @@ fn decode_piece_chars(
         DecodedPiece {
             chars: word_doc[start..end].iter().map(|&b| cp1252_to_char(b)).collect(),
             fc_ends: (start..end).map(|fc| (fc + 1) as u32).collect(),
+            cp_offsets: (0..end - start).map(|offset| offset as u32).collect(),
         }
     };
 
@@ -200,6 +207,7 @@ fn decode_piece_chars(
         } else {
             let mut chars = Vec::new();
             let mut fc_ends = Vec::new();
+            let mut cp_offsets = Vec::new();
             for (i, unit) in word_doc[byte_offset..available_end]
                 .as_chunks::<2>()
                 .0
@@ -209,9 +217,14 @@ fn decode_piece_chars(
                 if let Some(c) = char::from_u32(u16::from_le_bytes([unit[0], unit[1]]) as u32) {
                     chars.push(c);
                     fc_ends.push((byte_offset + i * 2 + 2) as u32);
+                    cp_offsets.push(i as u32);
                 }
             }
-            DecodedPiece { chars, fc_ends }
+            DecodedPiece {
+                chars,
+                fc_ends,
+                cp_offsets,
+            }
         }
     }
 }
@@ -223,7 +236,7 @@ fn append_range_overlap(
     cp_start: usize,
     range: SubdocRange,
     out: &mut String,
-    out_fcs: Option<&mut Vec<u32>>,
+    out_positions: Option<(&mut Vec<u32>, &mut Vec<u32>)>,
 ) {
     if range.len() == 0 {
         return;
@@ -235,8 +248,13 @@ fn append_range_overlap(
         let from = overlap_start - cp_start;
         let to = overlap_end - cp_start;
         out.extend(&piece.chars[from..to]);
-        if let Some(out_fcs) = out_fcs {
+        if let Some((out_fcs, out_cps)) = out_positions {
             out_fcs.extend_from_slice(&piece.fc_ends[from..to]);
+            out_cps.extend(
+                piece.cp_offsets[from..to]
+                    .iter()
+                    .map(|&offset| (cp_start + offset as usize) as u32),
+            );
         }
     }
 }
@@ -325,7 +343,7 @@ fn process_piece(
         cp_start,
         ranges.main,
         &mut text.main,
-        Some(&mut text.main_fc_ends),
+        Some((&mut text.main_fc_ends, &mut text.main_cps)),
     );
     append_range_overlap(&piece, cp_start, ranges.footnote, &mut text.footnote, None);
     append_range_overlap(&piece, cp_start, ranges.header, &mut text.header, None);
@@ -399,12 +417,16 @@ fn extract_text_from_piece_table(
         }
     }
 
-    let (paragraphs, picture_positions) =
-        split_paragraphs_and_pictures(&text.main, &text.main_fc_ends, &tables.lists, tables.picture_limits)?;
-    let unsupported_pictures = text.main.contains('\x08')
-        || [&text.footnote, &text.header, &text.annotation, &text.textbox]
-            .iter()
-            .any(|story| story.contains(['\x01', '\x08']));
+    let (paragraphs, picture_positions) = split_paragraphs_and_pictures(
+        &text.main,
+        &text.main_fc_ends,
+        &text.main_cps,
+        &tables.lists,
+        tables.picture_limits,
+    )?;
+    let unsupported_pictures = [&text.footnote, &text.header, &text.annotation, &text.textbox]
+        .iter()
+        .any(|story| story.contains(['\x01', '\x08']));
     Ok(MainText {
         paragraphs,
         picture_positions,

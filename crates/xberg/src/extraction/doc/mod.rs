@@ -10,6 +10,8 @@ mod papx;
 pub(crate) use images::{DocPicture, DocWithImages};
 
 #[cfg(test)]
+mod test_floating_images;
+#[cfg(test)]
 pub(crate) mod test_images;
 
 use crate::error::{Result, XbergError};
@@ -205,7 +207,7 @@ pub(crate) fn extract_doc_with_images(
         if main.unsupported_pictures {
             images::warn(
                 &mut processing_warnings,
-                "Floating pictures and pictures in DOC subdocuments are not extracted",
+                "Embedded pictures in DOC subdocuments are not extracted",
             );
         }
         images::extract_pictures(
@@ -399,6 +401,9 @@ struct SubdocumentText {
     /// properties for body text, and subdocument paragraphs carry no list
     /// numbering a reader would see. ~keep
     main_fc_ends: Vec<u32>,
+    /// CP of each character in `main`, same length as `main_fc_ends`.
+    /// Floating pictures are anchored by CP (`PlcSpaMom`). ~keep
+    main_cps: Vec<u32>,
     footnote: String,
     header: String,
     annotation: String,
@@ -435,6 +440,7 @@ const CELL_MARK: char = '\x07';
 fn split_paragraphs_and_pictures(
     main: &str,
     main_fc_ends: &[u32],
+    main_cps: &[u32],
     list_tables: &papx::ListTables,
     picture_limits: Option<&crate::extractors::security::SecurityLimits>,
 ) -> Result<(Vec<DocParagraph>, Vec<images::PicturePosition>)> {
@@ -479,10 +485,10 @@ fn split_paragraphs_and_pictures(
             }
         }
         after_last_mark = true;
-        if c == '\x01' && !is_markup {
+        if matches!(c, '\x01' | '\x08') && !is_markup {
             images::record_position(
                 &mut pending_pictures,
-                main_fc_ends.get(i).copied(),
+                images::PictureReference::new(c, main_fc_ends.get(i).copied(), main_cps.get(i).copied()),
                 raw.len(),
                 picture_limits,
                 &mut picture_count,

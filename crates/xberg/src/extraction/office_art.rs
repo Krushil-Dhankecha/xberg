@@ -5,6 +5,7 @@
 //! `PowerPoint Document` stream. ~keep
 
 use crate::extractors::security::{SecurityBudget, SecurityError};
+use std::collections::HashMap;
 
 /// `OfficeArtBlip` record types for the raster formats (MS-ODRAW 2.2.23).
 /// `RT_BLIP_JPEG_ALT` (0xF02A) is an alternate `recType` documented for JPEG blips
@@ -14,13 +15,25 @@ pub(crate) const RT_BLIP_JPEG: u16 = 0xF01D;
 const RT_BLIP_JPEG_ALT: u16 = 0xF02A;
 pub(crate) const RT_BLIP_PNG: u16 = 0xF01E;
 pub(crate) const RT_BLIP_DIB: u16 = 0xF01F;
+/// `msofbtBlipFirst` and `msofbtBlipLast`: every `OfficeArtBlip` record type, raster or
+/// metafile, lies in this range (MS-ODRAW 2.2.23). ~keep
+const RT_BLIP_FIRST: u16 = 0xF018;
+const RT_BLIP_LAST: u16 = 0xF117;
 
+/// `OfficeArtDggContainer`: the drawing group, holding the `BStoreContainer`.
+pub(crate) const MSOFBT_DGG_CONTAINER: u16 = 0xF000;
+/// `OfficeArtBStoreContainer`: the document's blips, one file block each.
+pub(crate) const MSOFBT_BSTORE_CONTAINER: u16 = 0xF001;
+/// `OfficeArtDgContainer`: one drawing, holding its shapes.
+pub(crate) const MSOFBT_DG_CONTAINER: u16 = 0xF002;
 /// `OfficeArtSpgrContainer`: a group of shapes. PowerPoint 97-2003 draws a table as one.
 pub(crate) const MSOFBT_SPGR_CONTAINER: u16 = 0xF003;
 /// `OfficeArtSpContainer`: one shape.
 pub(crate) const MSOFBT_SP_CONTAINER: u16 = 0xF004;
 /// `OfficeArtFSP`; its `recInstance` is the shape type.
 pub(crate) const MSOFBT_FSP: u16 = 0xF00A;
+/// `fGroup`, the low bit of the `OfficeArtFSP` flags that follow its 4-byte `spid`.
+const FSP_FLAG_GROUP: u32 = 0x0001;
 
 /// `msofbtBSE` -- one per blip in the document's `BStoreContainer`. A shape's `pib`
 /// property is a 1-based index into these, in container order (MS-ODRAW 2.2.32). ~keep
@@ -74,11 +87,23 @@ impl ArtRecord {
     fn content<'a>(&self, data: &'a [u8]) -> &'a [u8] {
         data.get(self.content_start..self.content_end).unwrap_or_default()
     }
+
+    /// The whole record, header included, within the `data` it was read from.
+    fn bytes<'a>(&self, data: &'a [u8]) -> &'a [u8] {
+        data.get(self.content_start.saturating_sub(8)..self.content_end)
+            .unwrap_or_default()
+    }
+}
+
+fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(
+        bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
+    ))
 }
 
 /// The record whose header starts at `data[pos]`, or `None` when its header or content
 /// would run past `end`.
-fn record_at(data: &[u8], pos: usize, end: usize) -> Option<ArtRecord> {
+pub(crate) fn record_at(data: &[u8], pos: usize, end: usize) -> Option<ArtRecord> {
     let content_start = pos.checked_add(8).filter(|&start| start <= end)?;
     let header = data.get(pos..content_start)?;
     let rec_ver_instance = u16::from_le_bytes([header[0], header[1]]);
@@ -173,8 +198,7 @@ fn bse_fo_delay(data: &[u8], record: &ArtRecord) -> Option<u32> {
     if record.rec_type != MSOFBT_BSE {
         return None;
     }
-    let bytes = record.content(data).get(BSE_FO_DELAY_OFFSET..BSE_FO_DELAY_OFFSET + 4)?;
-    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    u32_at(record.content(data), BSE_FO_DELAY_OFFSET)
 }
 
 /// The blips of a document, in order, so that a shape's 1-based `pib` indexes straight
@@ -197,14 +221,66 @@ impl<'a> BlipStore<'a> {
         Self { data, blocks }
     }
 
+    /// The `BStoreContainer` of an `OfficeArtDggContainer` read from `data`; empty when the
+    /// drawing group has none.
+    pub(crate) fn from_drawing_group(data: &'a [u8], group: &ArtRecord) -> Self {
+        let blocks = child_records(data, group.content_start, group.content_end)
+            .into_iter()
+            .find(|record| record.rec_type == MSOFBT_BSTORE_CONTAINER)
+            .map(|bstore| child_records(data, bstore.content_start, bstore.content_end))
+            .unwrap_or_default();
+        Self { data, blocks }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
 
+    fn block(&self, pib: u32) -> Option<&ArtRecord> {
+        self.blocks.get(usize::try_from(pib).ok()?.checked_sub(1)?)
+    }
+
     /// `foDelay` of the blip `pib` names.
     pub(crate) fn fo_delay(&self, pib: u32) -> Option<u32> {
-        let index = usize::try_from(pib).ok()?.checked_sub(1)?;
-        bse_fo_delay(self.data, self.blocks.get(index)?)
+        bse_fo_delay(self.data, self.block(pib)?)
+    }
+
+    /// The blip `pib` names: the one its file block holds or, for a BSE that holds none,
+    /// the blip record at its `foDelay` in `delay_stream`. A `pib` past the store is
+    /// [`Blip::Unsupported`].
+    pub(crate) fn blip(
+        &self,
+        pib: u32,
+        delay_stream: &'a [u8],
+        formats: &[BlipFormat],
+        budget: &mut SecurityBudget,
+    ) -> Result<Blip<'a>, SecurityError> {
+        let Some(block) = self.block(pib) else {
+            return Ok(Blip::Unsupported);
+        };
+        let held = find_blip(block.bytes(self.data), formats, budget)?;
+        if block.rec_type != MSOFBT_BSE || held != Blip::Empty {
+            return Ok(held);
+        }
+        let Some(delay) = bse_fo_delay(self.data, block) else {
+            return Ok(Blip::Unsupported);
+        };
+        // 0xFFFFFFFF says the blip is not in the delay stream (MS-ODRAW 2.2.32). ~keep
+        if delay == u32::MAX {
+            return Ok(Blip::Empty);
+        }
+        // `foDelay` is where the blip record itself starts, so only that record is read. The
+        // BSE's `size` is not used: a wrong one would reach into the next blip. ~keep
+        let Some(delayed) = usize::try_from(delay)
+            .ok()
+            .and_then(|start| record_at(delay_stream, start, delay_stream.len()))
+            .filter(|record| (RT_BLIP_FIRST..=RT_BLIP_LAST).contains(&record.rec_type))
+        else {
+            return Ok(Blip::Unsupported);
+        };
+        let bytes = delayed.bytes(delay_stream);
+        budget.account_text(bytes.len())?;
+        find_blip(bytes, formats, budget)
     }
 }
 
@@ -248,27 +324,40 @@ pub(crate) fn blip_header_len(rec_instance: u16) -> usize {
     if rec_instance & 0x1 == 1 { 33 } else { 17 }
 }
 
+/// What a search for a blip found.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Blip<'a> {
+    /// A blip in one of the formats asked for, and its picture bytes.
+    Image(BlipFormat, &'a [u8]),
+    /// Malformed records, or blips only in other formats.
+    Unsupported,
+    /// Well-formed records without any blip.
+    Empty,
+}
+
 /// The first blip in `data` whose format is one of `formats`, with its picture bytes.
 ///
 /// `data` is a run of OfficeArt records; containers and the file blocks of a
 /// `BStoreContainer` are searched in turn. A blip in another format is skipped, and a
-/// malformed record ends the search of the records around it.
+/// malformed record ends the search of the records around it; when no blip is found,
+/// either makes the result [`Blip::Unsupported`] rather than [`Blip::Empty`].
 pub(crate) fn find_blip<'a>(
     data: &'a [u8],
     formats: &[BlipFormat],
     budget: &mut SecurityBudget,
-) -> Result<Option<(BlipFormat, &'a [u8])>, SecurityError> {
+) -> Result<Blip<'a>, SecurityError> {
+    let mut found = Blip::Empty;
     let mut position = 0;
     while position < data.len() {
         budget.step()?;
         let Some(record) = record_at(data, position, data.len()) else {
-            return Ok(None);
+            return Ok(Blip::Unsupported);
         };
         let content = record.content(data);
         if record.is_container() || record.rec_type == MSOFBT_BSE {
             let children = if record.rec_type == MSOFBT_BSE {
                 let Some(name_length) = content.get(BSE_NAME_LENGTH_OFFSET) else {
-                    return Ok(None);
+                    return Ok(Blip::Unsupported);
                 };
                 content.get(BSE_HEADER_LEN + usize::from(*name_length)..)
             } else {
@@ -277,24 +366,97 @@ pub(crate) fn find_blip<'a>(
             budget.enter()?;
             let result = match children {
                 Some(children) => find_blip(children, formats, budget)?,
-                None => None,
+                None => Blip::Unsupported,
             };
             budget.leave();
-            if result.is_some() {
-                return Ok(result);
+            match result {
+                Blip::Image(..) => return Ok(result),
+                Blip::Unsupported => found = Blip::Unsupported,
+                Blip::Empty => {}
             }
         } else if let Some(format) = blip_format(record.rec_type).filter(|format| formats.contains(format)) {
             let Some(bytes) = content
                 .get(blip_header_len(record.rec_instance)..)
                 .filter(|bytes| !bytes.is_empty())
             else {
-                return Ok(None);
+                return Ok(Blip::Unsupported);
             };
-            return Ok(Some((format, bytes)));
+            return Ok(Blip::Image(format, bytes));
+        } else if (RT_BLIP_FIRST..=RT_BLIP_LAST).contains(&record.rec_type) {
+            found = Blip::Unsupported;
         }
         position = record.content_end;
     }
-    Ok(None)
+    Ok(found)
+}
+
+/// What a shape in a drawing displays, as far as its pictures go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Shape {
+    /// A shape displaying the blip its 1-based `pib` names.
+    Picture(u32),
+    /// The own shape of a group that holds a picture; its members are shapes of their own.
+    Group,
+    /// A shape without a picture, or a group that holds none.
+    Other,
+}
+
+/// Every shape in `drawing` by its `spid`, the members of its groups included. A `spid`
+/// stated twice keeps its first shape.
+pub(crate) fn drawing_shapes(
+    data: &[u8],
+    drawing: &ArtRecord,
+    budget: &mut SecurityBudget,
+) -> Result<HashMap<u32, Shape>, SecurityError> {
+    let mut records = Vec::new();
+    collect_art_records(data, drawing.content_start, drawing.content_end, 0, &mut records);
+    // The records are in stream order, so these offsets are sorted. ~keep
+    let pictures: Vec<usize> = records
+        .iter()
+        .filter(|record| pib_values(data, record).next().is_some())
+        .map(|record| record.content_start)
+        .collect();
+    let holds_picture = |group: &ArtRecord| {
+        let first = pictures.partition_point(|&at| at < group.content_start);
+        pictures.get(first).is_some_and(|&at| at < group.content_end)
+    };
+    let mut shapes = HashMap::new();
+    for (index, record) in records.iter().enumerate() {
+        budget.step()?;
+        if record.rec_type != MSOFBT_SP_CONTAINER {
+            continue;
+        }
+        let Some(fsp) = child_records(data, record.content_start, record.content_end)
+            .into_iter()
+            .find(|child| child.rec_type == MSOFBT_FSP)
+        else {
+            continue;
+        };
+        let fsp = fsp.content(data);
+        let (Some(spid), Some(flags)) = (u32_at(fsp, 0), u32_at(fsp, 4)) else {
+            continue;
+        };
+        let shape = if flags & FSP_FLAG_GROUP != 0 {
+            // A group's own shape opens its `SpgrContainer`, the record just before it. ~keep
+            let group = index
+                .checked_sub(1)
+                .and_then(|parent| records.get(parent))
+                .filter(|parent| {
+                    parent.rec_type == MSOFBT_SPGR_CONTAINER && parent.content_start + 8 == record.content_start
+                });
+            if group.is_some_and(holds_picture) {
+                Shape::Group
+            } else {
+                Shape::Other
+            }
+        } else {
+            shape_property(data, record, MSO_PROPERTY_PIB)
+                .filter(|&pib| pib != 0)
+                .map_or(Shape::Other, Shape::Picture)
+        };
+        shapes.entry(spid).or_insert(shape);
+    }
+    Ok(shapes)
 }
 
 #[cfg(test)]
@@ -345,17 +507,35 @@ mod tests {
         assert_eq!(shape_property(&data, &container, 0x0182), None);
     }
 
+    fn blip(rec_instance: u16, rec_type: u16, picture: &[u8]) -> Vec<u8> {
+        let header = vec![0; blip_header_len(rec_instance)];
+        record(rec_instance << 4, rec_type, &[header.as_slice(), picture].concat())
+    }
+
+    /// Byte offset of `size` inside an `msofbtBSE`'s content, which the reader ignores.
+    const BSE_SIZE_OFFSET: usize = 20;
+
+    fn bse(size: u32, fo_delay: u32, name: &[u8], embedded: &[u8]) -> Vec<u8> {
+        let mut content = vec![0; BSE_HEADER_LEN];
+        content[BSE_SIZE_OFFSET..BSE_SIZE_OFFSET + 4].copy_from_slice(&size.to_le_bytes());
+        content[BSE_FO_DELAY_OFFSET..BSE_FO_DELAY_OFFSET + 4].copy_from_slice(&fo_delay.to_le_bytes());
+        content[BSE_NAME_LENGTH_OFFSET] = name.len() as u8;
+        content.extend_from_slice(name);
+        content.extend_from_slice(embedded);
+        record(0x0002, MSOFBT_BSE, &content)
+    }
+
+    fn search<'a>(data: &'a [u8], formats: &[BlipFormat]) -> Blip<'a> {
+        let limits = SecurityLimits::default();
+        find_blip(data, formats, &mut SecurityBudget::from_limits(&limits)).expect("budget")
+    }
+
     #[test]
     fn should_number_only_the_bse_records_that_hold_fo_delay() {
-        let bse = |fo_delay: u32| {
-            let mut content = vec![0; BSE_FO_DELAY_OFFSET];
-            content.extend_from_slice(&fo_delay.to_le_bytes());
-            record(0x0002, MSOFBT_BSE, &content)
-        };
-        let mut data = bse(10);
+        let mut data = bse(0, 10, b"", b"");
         data.extend(record(0x0002, MSOFBT_BSE, &[0; BSE_FO_DELAY_OFFSET + 3]));
         data.extend(record(0x0000, MSOFBT_FSP, &[0; 8]));
-        data.extend(bse(20));
+        data.extend(bse(0, 20, b"", b""));
         let mut records = Vec::new();
         collect_art_records(&data, 0, data.len(), 0, &mut records);
         let store = BlipStore::from_bse_records(&data, &records);
@@ -368,28 +548,112 @@ mod tests {
 
     #[test]
     fn should_find_blip_in_file_blocks_and_skip_formats_not_asked_for() {
-        let blip = |rec_instance: u16, rec_type: u16, picture: &[u8]| {
-            let header = vec![0; blip_header_len(rec_instance)];
-            record(rec_instance << 4, rec_type, &[header.as_slice(), picture].concat())
-        };
-        let mut bse = vec![0; BSE_HEADER_LEN];
-        bse[BSE_NAME_LENGTH_OFFSET] = 2;
-        bse.extend_from_slice(b"nm");
-        bse.extend(blip(0x6E1, RT_BLIP_PNG, b"png"));
         let mut data = blip(0x7A8, RT_BLIP_DIB, b"dib");
-        data.extend(record(0x000F, 0xF001, &record(0x0002, MSOFBT_BSE, &bse)));
+        data.extend(record(
+            0x000F,
+            MSOFBT_BSTORE_CONTAINER,
+            &bse(0, 0, b"nm", &blip(0x6E1, RT_BLIP_PNG, b"png")),
+        ));
+
+        assert_eq!(search(&data, &[BlipFormat::Png]), Blip::Image(BlipFormat::Png, b"png"));
+        assert_eq!(search(&data, &[BlipFormat::Dib]), Blip::Image(BlipFormat::Dib, b"dib"));
+        assert_eq!(search(&data, &[BlipFormat::Jpeg]), Blip::Unsupported);
+        assert_eq!(search(&data[..data.len() - 1], &[BlipFormat::Png]), Blip::Unsupported);
+        assert_eq!(
+            search(
+                &record(0x000F, MSOFBT_BSTORE_CONTAINER, &bse(0, 0, b"", b"")),
+                &[BlipFormat::Png]
+            ),
+            Blip::Empty
+        );
+    }
+
+    #[test]
+    fn should_read_a_held_blip_or_the_one_record_at_fo_delay() {
+        let mut delay_stream = b"text".to_vec();
+        let jpeg = blip(0x46A, RT_BLIP_JPEG, b"jpeg");
+        let jpeg_at = delay_stream.len() as u32;
+        delay_stream.extend(&jpeg);
+        // A metafile blip followed by a PNG that belongs to another BSE. ~keep
+        let emf = record(0x3D40, 0xF01A, &[0; 50]);
+        let emf_at = delay_stream.len() as u32;
+        delay_stream.extend(&emf);
+        delay_stream.extend(blip(0x6E0, RT_BLIP_PNG, b"next"));
+        let jpeg_len = jpeg.len() as u32;
+        let blocks = [
+            bse(0, 0, b"", &blip(0x6E0, RT_BLIP_PNG, b"png")),
+            bse(jpeg_len, jpeg_at, b"", b""),
+            bse(0, jpeg_at, b"", b""),
+            bse(jpeg_len, u32::MAX, b"", b""),
+            bse(jpeg_len + 1, jpeg_at, b"", b""),
+            bse(delay_stream.len() as u32, emf_at, b"", b""),
+            bse(jpeg_len, 0, b"", b""),
+            bse(jpeg_len, delay_stream.len() as u32, b"", b""),
+        ]
+        .concat();
+        let data = record(
+            0x000F,
+            MSOFBT_DGG_CONTAINER,
+            &record(0x005F, MSOFBT_BSTORE_CONTAINER, &blocks),
+        );
+        let group = record_at(&data, 0, data.len()).expect("drawing group");
+        let store = BlipStore::from_drawing_group(&data, &group);
+        let limits = SecurityLimits::default();
+        let mut budget = SecurityBudget::from_limits(&limits);
+        let mut lookup = |pib| {
+            store
+                .blip(pib, &delay_stream, &[BlipFormat::Jpeg, BlipFormat::Png], &mut budget)
+                .expect("budget")
+        };
+
+        assert_eq!(lookup(1), Blip::Image(BlipFormat::Png, b"png"));
+        assert_eq!(lookup(2), Blip::Image(BlipFormat::Jpeg, b"jpeg"));
+        assert_eq!(lookup(3), Blip::Image(BlipFormat::Jpeg, b"jpeg"), "size is not read");
+        assert_eq!(lookup(4), Blip::Empty);
+        assert_eq!(lookup(5), Blip::Image(BlipFormat::Jpeg, b"jpeg"), "size is not read");
+        assert_eq!(lookup(6), Blip::Unsupported, "only the record at foDelay");
+        assert_eq!(lookup(7), Blip::Unsupported, "foDelay names no blip record");
+        assert_eq!(lookup(8), Blip::Unsupported, "foDelay past the stream");
+        assert_eq!(lookup(0), Blip::Unsupported);
+        assert_eq!(lookup(9), Blip::Unsupported);
+        assert_eq!(store.fo_delay(2), Some(jpeg_at));
+    }
+
+    #[test]
+    fn should_map_each_spid_to_what_its_shape_displays() {
+        let shape = |spid: u32, flags: u32, properties: &[u8]| {
+            let fsp = [spid.to_le_bytes(), flags.to_le_bytes()].concat();
+            let mut body = record(0x0002, MSOFBT_FSP, &fsp);
+            body.extend_from_slice(properties);
+            record(0x000F, MSOFBT_SP_CONTAINER, &body)
+        };
+        let pib = |table: u16, pib: u32| {
+            let entry = [MSO_PROPERTY_PIB.to_le_bytes().as_slice(), &pib.to_le_bytes()].concat();
+            record(0x0013, table, &entry)
+        };
+        let group = [
+            shape(1, FSP_FLAG_GROUP, &[]),
+            shape(2, 0, &pib(MSOFBT_OPT[1], 4)),
+            shape(3, 0, &pib(MSOFBT_OPT[0], 0)),
+        ]
+        .concat();
+        let without_pictures = [shape(5, FSP_FLAG_GROUP, &[]), shape(6, 0, &pib(MSOFBT_OPT[0], 0))].concat();
+        let mut shapes = record(0x000F, MSOFBT_SPGR_CONTAINER, &group);
+        shapes.extend(shape(2, 0, &[]));
+        shapes.extend(record(0x000F, MSOFBT_SPGR_CONTAINER, &without_pictures));
+        shapes.extend(shape(7, FSP_FLAG_GROUP, &pib(MSOFBT_OPT[0], 1)));
+        let data = record(0x000F, MSOFBT_DG_CONTAINER, &shapes);
+        let drawing = record_at(&data, 0, data.len()).expect("drawing");
         let limits = SecurityLimits::default();
 
-        let found = find_blip(&data, &[BlipFormat::Png], &mut SecurityBudget::from_limits(&limits));
-        assert_eq!(found.expect("budget"), Some((BlipFormat::Png, b"png".as_slice())));
-        let found = find_blip(&data, &[BlipFormat::Dib], &mut SecurityBudget::from_limits(&limits));
-        assert_eq!(found.expect("budget"), Some((BlipFormat::Dib, b"dib".as_slice())));
-        let found = find_blip(
-            &data[..data.len() - 1],
-            &[BlipFormat::Png],
-            &mut SecurityBudget::from_limits(&limits),
-        );
-        assert_eq!(found.expect("budget"), None);
+        let shapes = drawing_shapes(&data, &drawing, &mut SecurityBudget::from_limits(&limits)).expect("budget");
+        assert_eq!(shapes.len(), 6);
+        assert_eq!(shapes[&1], Shape::Group);
+        assert_eq!(shapes[&2], Shape::Picture(4));
+        assert_eq!(shapes[&3], Shape::Other);
+        assert_eq!(shapes[&5], Shape::Other, "a group of shapes without a picture");
+        assert_eq!(shapes[&6], Shape::Other);
+        assert_eq!(shapes[&7], Shape::Other, "fGroup outside an SpgrContainer");
     }
 
     #[test]

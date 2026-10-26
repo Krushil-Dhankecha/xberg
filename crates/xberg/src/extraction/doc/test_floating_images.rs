@@ -1,0 +1,448 @@
+//! Floating pictures: a main-document `\x08` anchor whose `PlcSpaMom` shape names a blip.
+
+use super::test_images::{WHITE, change_stream, image_config, picture_doc, png};
+use super::tests::{
+    TestPiece, build_doc_ole, build_fib, build_plc_pcd, build_table_stream, compressed_fc, test_rg_fc_lcb_offset,
+    write_u32,
+};
+use crate::core::config::ExtractionConfig;
+use crate::extraction::office_art::{
+    MSO_PROPERTY_PIB, MSOFBT_BSE, MSOFBT_BSTORE_CONTAINER, MSOFBT_DG_CONTAINER, MSOFBT_DGG_CONTAINER, MSOFBT_FSP,
+    MSOFBT_OPT, MSOFBT_SP_CONTAINER, MSOFBT_SPGR_CONTAINER, RT_BLIP_PNG,
+};
+use crate::extractors::doc::DocExtractor;
+use crate::plugins::InternalDocumentExtractor;
+
+fn office_art_record(packed: u16, kind: u16, body: &[u8]) -> Vec<u8> {
+    let mut record = packed.to_le_bytes().to_vec();
+    record.extend_from_slice(&kind.to_le_bytes());
+    record.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    record.extend_from_slice(body);
+    record
+}
+
+/// One piece of a test document's main text.
+enum TextPiece {
+    /// UTF-16 code units, two bytes each.
+    Utf16(Vec<u16>),
+    /// CP1252 bytes, one byte each.
+    Cp1252(Vec<u8>),
+}
+
+fn utf16(text: &str) -> TextPiece {
+    TextPiece::Utf16(text.encode_utf16().collect())
+}
+
+/// A main-document floating shape anchored at the text's `\x08`: `PlcSpaMom` names
+/// its shape, whose `pib` selects one of `images`, each a BSE in the drawing group's
+/// BStore. `delayed` stores each blip in the WordDocument stream at its BSE's
+/// `foDelay`, as Word does; otherwise the blip follows its BSE inside the BStore.
+struct FloatingDoc {
+    pieces: Vec<TextPiece>,
+    images: Vec<Vec<u8>>,
+    delayed: bool,
+    pib: Option<u32>,
+}
+
+impl FloatingDoc {
+    fn new(text: &str) -> Self {
+        Self {
+            pieces: vec![utf16(text)],
+            images: vec![png(WHITE)],
+            delayed: true,
+            pib: Some(1),
+        }
+    }
+
+    const SPID: u32 = 1026;
+
+    fn build(&self) -> Vec<u8> {
+        let (mut word, pieces, anchor, ccp) = self.main_text();
+        let mut table = build_table_stream(&mut word, &build_plc_pcd(&pieces));
+        let content = self.office_art_content(&mut word);
+        let dgg_info = table.len();
+        table.extend_from_slice(&content);
+        write_u32(&mut word, test_rg_fc_lcb_offset() + 50 * 8, dgg_info as u32);
+        write_u32(&mut word, test_rg_fc_lcb_offset() + 50 * 8 + 4, content.len() as u32);
+
+        let plc_spa = table.len();
+        table.extend_from_slice(&(anchor as u32).to_le_bytes());
+        table.extend_from_slice(&(ccp as u32).to_le_bytes());
+        let mut spa = vec![0u8; 26];
+        write_u32(&mut spa, 0, Self::SPID);
+        table.extend_from_slice(&spa);
+        write_u32(&mut word, test_rg_fc_lcb_offset() + 40 * 8, plc_spa as u32);
+        write_u32(&mut word, test_rg_fc_lcb_offset() + 40 * 8 + 4, 34);
+        build_doc_ole(&word, &table)
+    }
+
+    /// The WordDocument stream holding the main text, its pieces, the anchor's CP and
+    /// the text's length in CPs.
+    fn main_text(&self) -> (Vec<u8>, Vec<TestPiece>, usize, usize) {
+        let ccp = self
+            .pieces
+            .iter()
+            .map(|piece| match piece {
+                TextPiece::Utf16(units) => units.len(),
+                TextPiece::Cp1252(bytes) => bytes.len(),
+            })
+            .sum::<usize>();
+        let mut word = build_fib(2048, ccp as u32, 0, 0, 0);
+        let (mut fc, mut cp, mut anchor) = (1024, 0, None);
+        let mut pieces = Vec::new();
+        for piece in &self.pieces {
+            let (bytes, units, fc_raw) = match piece {
+                TextPiece::Utf16(units) => (
+                    units.iter().flat_map(|unit| unit.to_le_bytes()).collect::<Vec<_>>(),
+                    units.clone(),
+                    fc as u32,
+                ),
+                TextPiece::Cp1252(bytes) => (
+                    bytes.clone(),
+                    bytes.iter().map(|&byte| u16::from(byte)).collect(),
+                    compressed_fc(fc as u32),
+                ),
+            };
+            if let Some(index) = units.iter().position(|&unit| unit == 0x08) {
+                anchor.get_or_insert(cp + index);
+            }
+            word[fc..fc + bytes.len()].copy_from_slice(&bytes);
+            pieces.push(TestPiece {
+                cp_start: cp as u32,
+                cp_end: (cp + units.len()) as u32,
+                fc_raw,
+            });
+            fc += bytes.len();
+            cp += units.len();
+        }
+        (word, pieces, anchor.expect("floating anchor"), ccp)
+    }
+
+    /// `OfficeArtContent`: the drawing group, one BSE per image, then the main
+    /// document's drawing. A delayed blip goes at the end of `word`.
+    fn office_art_content(&self, word: &mut Vec<u8>) -> Vec<u8> {
+        let mut blocks = Vec::new();
+        for image in &self.images {
+            let blip = office_art_record(0x6e00, RT_BLIP_PNG, &[vec![0u8; 17].as_slice(), image].concat());
+            let mut bse = vec![0u8; 36];
+            bse[0] = 6;
+            bse[1] = 6;
+            write_u32(&mut bse, 20, blip.len() as u32);
+            write_u32(&mut bse, 24, 1);
+            if self.delayed {
+                write_u32(&mut bse, 28, word.len() as u32);
+                word.extend_from_slice(&blip);
+            } else {
+                bse.extend_from_slice(&blip);
+            }
+            blocks.extend(office_art_record(0x0062, MSOFBT_BSE, &bse));
+        }
+        let count = self.images.len() as u16;
+        let bstore = office_art_record((count << 4) | 0xf, MSOFBT_BSTORE_CONTAINER, &blocks);
+        let mut content = office_art_record(0x000f, MSOFBT_DGG_CONTAINER, &bstore);
+        let fsp = [Self::SPID.to_le_bytes(), 0x0a00u32.to_le_bytes()].concat();
+        let mut shape = office_art_record(0x0002, MSOFBT_FSP, &fsp);
+        if let Some(pib) = self.pib {
+            let property = [(MSO_PROPERTY_PIB | 0x4000).to_le_bytes().as_slice(), &pib.to_le_bytes()].concat();
+            shape.extend(office_art_record(0x0013, MSOFBT_OPT[0], &property));
+        }
+        let shape = office_art_record(0x000f, MSOFBT_SP_CONTAINER, &shape);
+        let group = office_art_record(0x000f, MSOFBT_SPGR_CONTAINER, &shape);
+        content.push(0);
+        content.extend(office_art_record(0x000f, MSOFBT_DG_CONTAINER, &group));
+        content
+    }
+}
+
+fn floating_png_doc(text: &str, delayed: bool, pib: Option<u32>) -> (Vec<u8>, Vec<u8>) {
+    let doc = FloatingDoc {
+        delayed,
+        pib,
+        ..FloatingDoc::new(text)
+    };
+    (doc.build(), doc.images[0].clone())
+}
+
+async fn extract_floating(bytes: &[u8]) -> crate::types::internal::InternalDocument {
+    DocExtractor::new()
+        .extract_content(bytes, "application/msword", &image_config())
+        .await
+        .expect("DOC")
+}
+
+fn texts(doc: &crate::types::internal::InternalDocument) -> Vec<&str> {
+    doc.elements
+        .iter()
+        .filter(|element| !matches!(element.kind, crate::types::internal::ElementKind::Image { .. }))
+        .map(|element| element.text.as_str())
+        .collect()
+}
+
+fn assert_picture_between_paragraphs(doc: &crate::types::internal::InternalDocument, context: &str) {
+    assert_eq!(
+        doc.processing_warnings.len(),
+        0,
+        "{context}: {:?}",
+        doc.processing_warnings
+    );
+    assert_eq!(doc.images.len(), 1, "{context}");
+    assert_eq!(doc.elements.len(), 3, "{context}");
+    assert_eq!(doc.elements[0].text, "BEFORE", "{context}");
+    assert!(
+        matches!(
+            doc.elements[1].kind,
+            crate::types::internal::ElementKind::Image { image_index: 0 }
+        ),
+        "{context}"
+    );
+    assert_eq!(doc.elements[2].text, "AFTER", "{context}");
+}
+
+#[tokio::test]
+async fn should_extract_floating_doc_pictures_between_native_paragraphs() {
+    for delayed in [true, false] {
+        let (bytes, png) = floating_png_doc("BEFORE\r\x08\rAFTER\r", delayed, Some(1));
+        let doc = extract_floating(&bytes).await;
+        assert_picture_between_paragraphs(&doc, &format!("delayed {delayed}"));
+        assert_eq!(doc.images[0].format, "png");
+        assert_eq!(doc.images[0].data.as_ref(), png.as_slice());
+    }
+}
+
+#[tokio::test]
+async fn should_place_floating_doc_pictures_by_cp_across_pieces() {
+    // An unpaired surrogate takes a CP but decodes to no text. ~keep
+    let lone = |before: &str, after: &str| {
+        TextPiece::Utf16(
+            before
+                .encode_utf16()
+                .chain([0xd800])
+                .chain(after.encode_utf16())
+                .collect(),
+        )
+    };
+    let cases = [
+        (
+            "anchor in a later piece",
+            vec![utf16("BEFORE\r"), utf16("\x08\rAFTER\r")],
+        ),
+        (
+            "dropped unit before the anchor",
+            vec![lone("BEFORE\r", "\x08\rAFTER\r")],
+        ),
+        (
+            "compressed piece after a dropped unit",
+            vec![lone("BEFORE\r", ""), TextPiece::Cp1252(b"\x08\rAFTER\r".to_vec())],
+        ),
+    ];
+    for (case, pieces) in cases {
+        let bytes = FloatingDoc {
+            pieces,
+            ..FloatingDoc::new("")
+        }
+        .build();
+        assert_picture_between_paragraphs(&extract_floating(&bytes).await, case);
+    }
+}
+
+#[tokio::test]
+async fn should_extract_the_floating_doc_picture_its_pib_selects() {
+    for delayed in [true, false] {
+        let source = FloatingDoc {
+            images: vec![png(WHITE), png([0, 0, 0])],
+            delayed,
+            pib: Some(2),
+            ..FloatingDoc::new("BEFORE\r\x08\rAFTER\r")
+        };
+        let doc = extract_floating(&source.build()).await;
+        assert_picture_between_paragraphs(&doc, &format!("delayed {delayed}"));
+        assert_eq!(
+            doc.images[0].data.as_ref(),
+            source.images[1].as_slice(),
+            "delayed {delayed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn should_read_floating_doc_picture_pib_from_a_secondary_property_table() {
+    let (bytes, png) = floating_png_doc("BEFORE\r\x08\rAFTER\r", true, Some(1));
+    // A secondary FOPT holds `pib`, with `fBid` clear in its `opid`. ~keep
+    let bytes = change_stream(bytes, "/1Table", |table| {
+        let fopt = [0x13, 0x00, 0x0b, 0xf0, 6, 0, 0, 0, 0x04, 0x41];
+        let at = table
+            .windows(fopt.len())
+            .position(|window| window == fopt)
+            .expect("FOPT record");
+        table[at + 2..at + 4].copy_from_slice(&MSOFBT_OPT[1].to_le_bytes());
+        table[at + 8..at + 10].copy_from_slice(&MSO_PROPERTY_PIB.to_le_bytes());
+    });
+    let doc = extract_floating(&bytes).await;
+    assert_eq!(doc.processing_warnings.len(), 0, "{:?}", doc.processing_warnings);
+    assert_eq!(doc.images.len(), 1);
+    assert_eq!(doc.images[0].data.as_ref(), png.as_slice());
+}
+
+#[tokio::test]
+async fn should_skip_floating_doc_shapes_without_a_picture_silently() {
+    let (bytes, _) = floating_png_doc("BEFORE\r\x08\rAFTER\r", true, None);
+    let doc = extract_floating(&bytes).await;
+    assert_eq!(doc.images.len(), 0);
+    assert_eq!(doc.processing_warnings.len(), 0);
+    assert_eq!(texts(&doc), ["BEFORE", "AFTER"]);
+}
+
+#[tokio::test]
+async fn should_warn_about_grouped_floating_doc_pictures_only() {
+    for pib in [Some(1), None] {
+        let (bytes, _) = floating_png_doc("BEFORE\r\x08\rAFTER\r", true, pib);
+        let bytes = change_stream(bytes, "/1Table", |table| {
+            let fsp = [FloatingDoc::SPID.to_le_bytes(), 0x0a00u32.to_le_bytes()].concat();
+            let at = table
+                .windows(fsp.len())
+                .position(|window| window == fsp)
+                .expect("FSP record");
+            write_u32(table, at + 4, 0x0a01);
+        });
+        let doc = extract_floating(&bytes).await;
+        assert_eq!(doc.images.len(), 0, "pib {pib:?}");
+        assert_eq!(doc.processing_warnings.len(), usize::from(pib.is_some()), "pib {pib:?}");
+        assert!(
+            doc.processing_warnings
+                .iter()
+                .all(|warning| warning.message.contains("Grouped floating pictures"))
+        );
+        assert_eq!(texts(&doc), ["BEFORE", "AFTER"], "pib {pib:?}");
+    }
+}
+
+#[tokio::test]
+async fn should_warn_that_a_floating_doc_picture_outside_the_delay_stream_holds_no_image_data() {
+    let (bytes, _) = floating_png_doc("BEFORE\r\x08\rAFTER\r", true, Some(1));
+    // `foDelay` 0xFFFFFFFF says the blip is not in the delay stream. ~keep
+    let bytes = change_stream(bytes, "/1Table", |table| {
+        let header = [0x0062u16.to_le_bytes(), MSOFBT_BSE.to_le_bytes()].concat();
+        let bse = table
+            .windows(header.len())
+            .position(|window| window == header)
+            .expect("BSE record");
+        write_u32(table, bse + 8 + 28, u32::MAX);
+    });
+    let doc = extract_floating(&bytes).await;
+    assert_eq!(doc.images.len(), 0);
+    assert_eq!(doc.processing_warnings.len(), 1);
+    assert!(doc.processing_warnings[0].message.contains("no image data"));
+    assert_eq!(texts(&doc), ["BEFORE", "AFTER"]);
+}
+
+#[tokio::test]
+async fn should_warn_and_preserve_native_text_when_floating_picture_records_are_malformed() {
+    let text = "BEFORE\r\x08\rAFTER\r";
+    let unsupported = "unsupported image format";
+    let unresolved = "floating shape has no drawing record";
+    for (mutation, expected) in [unsupported, unsupported, unresolved, unresolved, unresolved]
+        .into_iter()
+        .enumerate()
+    {
+        let (bytes, _) = floating_png_doc(text, true, Some(if mutation == 0 { 2 } else { 1 }));
+        let bytes = match mutation {
+            0 => bytes,
+            1 => change_stream(bytes, "/WordDocument", |word| word.truncate(2060)),
+            2 => change_stream(bytes, "/1Table", |table| {
+                let spa = table.len() - 26;
+                write_u32(table, spa, 7);
+            }),
+            3 => change_stream(bytes, "/1Table", |table| {
+                let plc_spa = table.len() - 34;
+                write_u32(table, plc_spa, 3);
+            }),
+            _ => change_stream(bytes, "/WordDocument", |word| {
+                write_u32(word, test_rg_fc_lcb_offset() + 50 * 8 + 4, u32::MAX)
+            }),
+        };
+        let doc = extract_floating(&bytes).await;
+        assert_eq!(doc.images.len(), 0, "mutation {mutation}");
+        assert_eq!(doc.processing_warnings.len(), 1, "mutation {mutation}");
+        assert!(
+            doc.processing_warnings[0].message.contains(expected),
+            "mutation {mutation}: {}",
+            doc.processing_warnings[0].message
+        );
+        assert_eq!(texts(&doc), ["BEFORE", "AFTER"], "mutation {mutation}");
+    }
+}
+
+#[tokio::test]
+async fn should_reject_floating_doc_picture_when_content_budget_is_exceeded() {
+    let (bytes, _) = floating_png_doc("\x08\r", true, Some(1));
+    let mut config = image_config();
+    config.security_limits = Some(crate::extractors::security::SecurityLimits {
+        max_content_size: 16,
+        ..Default::default()
+    });
+    let result = DocExtractor::new()
+        .extract_content(&bytes, "application/msword", &config)
+        .await;
+    assert!(matches!(result, Err(crate::XbergError::Validation { .. })));
+}
+
+#[cfg(all(feature = "ocr", feature = "tokio-runtime"))]
+#[tokio::test]
+async fn should_ocr_floating_doc_picture_in_anchor_order() {
+    let png = include_bytes!("test_images/marker.png");
+    let bytes = FloatingDoc {
+        images: vec![png.to_vec()],
+        ..FloatingDoc::new("BEFORE\r\x08\rAFTER\r")
+    }
+    .build();
+    let config: ExtractionConfig = serde_json::from_value(serde_json::json!({
+        "use_cache": false, "ocr_embedded_images": true,
+        "ocr": {"backend": "tesseract", "language": "eng", "tesseract_config": {
+            "language": "eng", "use_cache": false, "output_format": "text"
+        }}
+    }))
+    .expect("OCR configuration");
+    let output = crate::extract(
+        crate::ExtractInput::from_bytes(bytes, "application/msword", None),
+        &config,
+    )
+    .await
+    .expect("public DOC extraction");
+    assert_eq!(output.errors.len(), 0, "{:?}", output.errors);
+    let content = &output.results[0].content;
+    let before = content.find("BEFORE").expect("native before");
+    let marker = content.find("DOC IMAGE MARKER ALPHA BRAVO").expect("OCR marker");
+    let after = content.find("AFTER").expect("native after");
+    assert!(before < marker && marker < after);
+}
+
+#[tokio::test]
+async fn should_warn_about_unresolved_floating_doc_shapes_only_when_requested() {
+    let (bytes, _) = picture_doc("BEFORE\r\x08\rAFTER\r", false);
+    for requested in [false, true] {
+        let config = if requested {
+            image_config()
+        } else {
+            ExtractionConfig::default()
+        };
+        let doc = DocExtractor::new()
+            .extract_content(&bytes, "application/msword", &config)
+            .await
+            .expect("DOC");
+        assert_eq!(doc.images.len(), 0);
+        assert_eq!(
+            doc.processing_warnings
+                .iter()
+                .filter(|warning| warning.message.contains("floating shape"))
+                .count(),
+            usize::from(requested)
+        );
+        assert_eq!(
+            doc.elements
+                .iter()
+                .map(|element| element.text.as_str())
+                .collect::<Vec<_>>(),
+            ["BEFORE", "AFTER"]
+        );
+    }
+}

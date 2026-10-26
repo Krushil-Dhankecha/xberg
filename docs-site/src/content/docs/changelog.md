@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **(doc): Extract floating PNG and JPEG pictures from Word 97–2003 documents.**
+  A picture positioned over the text was skipped with a warning, so its text never reached embedded OCR.
+  Floating pictures in the main document are now extracted at their anchor, so their OCR text keeps source
+  order. A picture with no image data now says so instead of reporting an unsupported format. (#2273)
 - **(html): Read a page that is not UTF-8 in the encoding its byte order mark or `<meta>` declares.**
   Every non-UTF-8 page was decoded as UTF-8, so a `<meta charset>` or `<meta http-equiv>` declaration was ignored
   and each non-ASCII character of a windows-1252, Latin-1 or Shift_JIS page became U+FFFD, with a lossy-decode
