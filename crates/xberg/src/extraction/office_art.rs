@@ -492,6 +492,19 @@ mod tests {
     }
 
     #[test]
+    fn should_stop_descending_at_the_depth_cap() {
+        let mut data = record(0x0002, MSOFBT_FSP, &[0; 8]);
+        for _ in 0..MAX_OFFICE_ART_DEPTH + 3 {
+            data = record(0x000F, MSOFBT_SPGR_CONTAINER, &data);
+        }
+
+        let mut records = Vec::new();
+        collect_art_records(&data, 0, data.len(), 0, &mut records);
+        assert_eq!(records.len(), MAX_OFFICE_ART_DEPTH + 1);
+        assert!(records.iter().all(|record| record.rec_type == MSOFBT_SPGR_CONTAINER));
+    }
+
+    #[test]
     fn should_read_shape_property_from_every_property_table_within_its_entry_count() {
         let entry = |opid: u16, value: u32| [opid.to_le_bytes().as_slice(), &value.to_le_bytes()].concat();
         // Two entries declared, three present: the third is complex data, not an entry. ~keep
@@ -579,6 +592,13 @@ mod tests {
         let emf_at = delay_stream.len() as u32;
         delay_stream.extend(&emf);
         delay_stream.extend(blip(0x6E0, RT_BLIP_PNG, b"next"));
+        // A container that holds a blip is not itself a blip record. ~keep
+        let wrapped_at = delay_stream.len() as u32;
+        delay_stream.extend(record(
+            0x000F,
+            MSOFBT_BSTORE_CONTAINER,
+            &blip(0x6E0, RT_BLIP_PNG, b"wrapped"),
+        ));
         let jpeg_len = jpeg.len() as u32;
         let blocks = [
             bse(0, 0, b"", &blip(0x6E0, RT_BLIP_PNG, b"png")),
@@ -589,6 +609,7 @@ mod tests {
             bse(delay_stream.len() as u32, emf_at, b"", b""),
             bse(jpeg_len, 0, b"", b""),
             bse(jpeg_len, delay_stream.len() as u32, b"", b""),
+            bse(0, wrapped_at, b"", b""),
         ]
         .concat();
         let data = record(
@@ -614,8 +635,9 @@ mod tests {
         assert_eq!(lookup(6), Blip::Unsupported, "only the record at foDelay");
         assert_eq!(lookup(7), Blip::Unsupported, "foDelay names no blip record");
         assert_eq!(lookup(8), Blip::Unsupported, "foDelay past the stream");
+        assert_eq!(lookup(9), Blip::Unsupported, "foDelay names a container");
         assert_eq!(lookup(0), Blip::Unsupported);
-        assert_eq!(lookup(9), Blip::Unsupported);
+        assert_eq!(lookup(10), Blip::Unsupported);
         assert_eq!(store.fo_delay(2), Some(jpeg_at));
     }
 
