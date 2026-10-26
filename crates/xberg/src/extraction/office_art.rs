@@ -246,8 +246,8 @@ impl<'a> BlipStore<'a> {
     }
 
     /// The blip `pib` names: the one its file block holds or, for a BSE that holds none,
-    /// the blip record at its `foDelay` in `delay_stream`. A `pib` past the store is
-    /// [`Blip::Unsupported`].
+    /// the blip record at its `foDelay` in `delay_stream`. A `pib` past the store, or a
+    /// file block that is not a BSE and holds no blip, is [`Blip::Unsupported`].
     pub(crate) fn blip(
         &self,
         pib: u32,
@@ -259,7 +259,7 @@ impl<'a> BlipStore<'a> {
             return Ok(Blip::Unsupported);
         };
         let held = find_blip(block.bytes(self.data), formats, budget)?;
-        if block.rec_type != MSOFBT_BSE || held != Blip::Empty {
+        if held != Blip::Empty {
             return Ok(held);
         }
         let Some(delay) = bse_fo_delay(self.data, block) else {
@@ -437,13 +437,13 @@ pub(crate) fn drawing_shapes(
             continue;
         };
         let shape = if flags & FSP_FLAG_GROUP != 0 {
-            // A group's own shape opens its `SpgrContainer`, the record just before it. ~keep
+            // A group's own shape opens its `SpgrContainer`, the record just before it. Any
+            // other `SpgrContainer` just before a shape has no records walked inside it, so
+            // it holds no picture. ~keep
             let group = index
                 .checked_sub(1)
                 .and_then(|parent| records.get(parent))
-                .filter(|parent| {
-                    parent.rec_type == MSOFBT_SPGR_CONTAINER && parent.content_start + 8 == record.content_start
-                });
+                .filter(|parent| parent.rec_type == MSOFBT_SPGR_CONTAINER);
             if group.is_some_and(holds_picture) {
                 Shape::Group
             } else {
@@ -610,6 +610,7 @@ mod tests {
             bse(jpeg_len, 0, b"", b""),
             bse(jpeg_len, delay_stream.len() as u32, b"", b""),
             bse(0, wrapped_at, b"", b""),
+            record(0x0000, MSOFBT_FSP, &[0; 8]),
         ]
         .concat();
         let data = record(
@@ -636,8 +637,9 @@ mod tests {
         assert_eq!(lookup(7), Blip::Unsupported, "foDelay names no blip record");
         assert_eq!(lookup(8), Blip::Unsupported, "foDelay past the stream");
         assert_eq!(lookup(9), Blip::Unsupported, "foDelay names a container");
+        assert_eq!(lookup(10), Blip::Unsupported, "a file block that is not a BSE");
         assert_eq!(lookup(0), Blip::Unsupported);
-        assert_eq!(lookup(10), Blip::Unsupported);
+        assert_eq!(lookup(11), Blip::Unsupported);
         assert_eq!(store.fo_delay(2), Some(jpeg_at));
     }
 
