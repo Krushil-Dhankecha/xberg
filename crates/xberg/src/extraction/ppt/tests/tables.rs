@@ -3,6 +3,7 @@
 
 use super::super::*;
 use super::text_records::{container, record_header, text_chars_atom};
+use crate::extraction::office_art::MSO_PROPERTY_PIB;
 
 fn atom(rec_ver_instance: u16, rec_type: u16, body: &[u8]) -> Vec<u8> {
     let mut buf = record_header(rec_ver_instance, rec_type, body.len() as u32);

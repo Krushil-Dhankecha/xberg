@@ -97,6 +97,10 @@ pub(crate) mod asciimath;
 #[cfg(any(feature = "office", feature = "xml"))]
 pub(crate) mod math_symbols;
 
+/// OfficeArt (MS-ODRAW) records shared by the DOC and PPT extractors.
+#[cfg(feature = "office")]
+pub(crate) mod office_art;
+
 #[cfg(feature = "office")]
 pub mod office_metadata;
 

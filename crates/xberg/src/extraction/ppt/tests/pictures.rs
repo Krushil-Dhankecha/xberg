@@ -1,5 +1,6 @@
 use super::super::*;
 use super::text_records::{container, record_header, text_chars_atom};
+use crate::extraction::office_art::{MSO_PROPERTY_PIB, MSOFBT_BSE, MSOFBT_OPT, RT_BLIP_DIB, RT_BLIP_JPEG, RT_BLIP_PNG};
 
 /// Build a raster `OfficeArtBlip` record with a single 16-byte UID
 /// (MS-ODRAW 2.2.27-2.2.29 "one UID" layout: `rgbUid1(16) + tag(1) +

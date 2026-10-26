@@ -7,10 +7,9 @@
 //! and the slide whose shape displays it so the caller can hand them to the matching
 //! extractor.
 
-use super::{
-    ArtRecord, LiveSlides, PPT_WARNING_SOURCE, collect_art_records, live_slide_offsets, read_stream, read_u32_le,
-};
+use super::{LiveSlides, PPT_WARNING_SOURCE, live_slide_offsets, read_stream, read_u32_le};
 use crate::error::{Result, XbergError};
+use crate::extraction::office_art::{ArtRecord, collect_art_records};
 use crate::types::ProcessingWarning;
 use std::borrow::Cow;
 use std::io::{Cursor, Read};

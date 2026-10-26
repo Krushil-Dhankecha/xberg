@@ -9,6 +9,10 @@ mod embedded;
 pub(crate) use embedded::extract_ppt_embedded_objects;
 
 use crate::error::{Result, XbergError};
+use crate::extraction::office_art::{
+    ArtRecord, BlipStore, MSOFBT_FSP, MSOFBT_SP_CONTAINER, MSOFBT_SPGR_CONTAINER, blip_format, blip_header_len,
+    child_records, collect_art_records, pib_values, shape_property,
+};
 use crate::types::{ExtractedImage, ProcessingWarning};
 use bytes::Bytes;
 use std::borrow::Cow;
@@ -129,39 +133,6 @@ const TEXT_TYPE_TITLE: u32 = 0;
 /// `5` is `CenterBody` (body text, not a title); confirmed against Apache POI's
 /// `TextHeaderAtom` constants, which the MS-PPT spec text alone does not make obvious. ~keep
 const TEXT_TYPE_CENTER_TITLE: u32 = 6;
-
-/// `OfficeArtBlip` record types for the raster formats a `Pictures` stream
-/// can hold (MS-ODRAW 2.2.23). `RT_BLIP_JPEG_ALT` (0xF02A) is an alternate
-/// `recType` documented for JPEG blips written by older Office versions; it
-/// uses the same `OfficeArtBlipJPEG` layout as 0xF01D.
-const RT_BLIP_JPEG: u16 = 0xF01D;
-const RT_BLIP_JPEG_ALT: u16 = 0xF02A;
-const RT_BLIP_PNG: u16 = 0xF01E;
-const RT_BLIP_DIB: u16 = 0xF01F;
-
-/// `msofbtBSE` -- one per blip in the document's `BStoreContainer`. A shape's `pib`
-/// property is a 1-based index into these, in container order (MS-ODRAW 2.2.32). ~keep
-const MSOFBT_BSE: u16 = 0xF007;
-/// Byte offset of `foDelay` inside an `msofbtBSE`'s content, past `btWin32` (1), `btMacOS`
-/// (1), `rgbUid` (16), `tag` (2), `size` (4) and `cRef` (4). `foDelay` is the blip record's
-/// own start offset in the `Pictures` stream, which is the key `Pictures` is walked by. ~keep
-const BSE_FO_DELAY_OFFSET: usize = 28;
-
-/// `msofbtOPT` and its secondary/tertiary siblings, each a table of `OfficeArtFOPTE`
-/// property entries (MS-ODRAW 2.3.1). `pib` is normally in the primary table, but a
-/// shape that overflows its property set spills into the other two. ~keep
-const MSOFBT_OPT: [u16; 3] = [0xF00B, 0xF121, 0xF122];
-/// An `OfficeArtFOPTE` is a 2-byte `opid` followed by a 4-byte value.
-const FOPT_ENTRY_LEN: usize = 6;
-/// The low 14 bits of `opid` are the property number; bit 14 is `fBid` and bit 15 is
-/// `fComplex`, neither of which changes where the entry sits. ~keep
-const FOPT_PROPERTY_ID_MASK: u16 = 0x3FFF;
-/// `pib` -- the 1-based `BStoreContainer` index of the blip a picture shape displays.
-const MSO_PROPERTY_PIB: u16 = 0x0104;
-
-/// Depth cap for the OfficeArt container walk. Real nesting is under a dozen levels; this
-/// only stops a hostile self-describing container tree from exhausting the stack. ~keep
-const MAX_OFFICE_ART_DEPTH: usize = 16;
 
 /// `UserEditAtom` -- one per save, chained newest-to-oldest through `offsetLastEdit`.
 const RT_USER_EDIT_ATOM: u16 = 0x0FF5;
@@ -1029,60 +1000,6 @@ fn extract_texts_from_records(
     Ok((slides, loose_texts, speaker_notes))
 }
 
-/// One record header from the PowerPoint/OfficeArt record tree, flattened out of its
-/// containers so callers can filter by type without re-walking.
-pub(super) struct ArtRecord {
-    pub(super) rec_instance: u16,
-    pub(super) rec_type: u16,
-    pub(super) content_start: usize,
-    pub(super) content_end: usize,
-}
-
-/// Collect every record header in `data[start..end]`, descending into containers.
-///
-/// A record is a container when `recVer` (the low nibble of the first field) is 0xF; its
-/// children are the records inside its own declared byte range. A `recLen` that would run
-/// past `end` stops the walk at that level rather than over-reading -- the stream is
-/// untrusted, and a truncated tail is the common shape of a salvageable corrupt deck.
-pub(super) fn collect_art_records(data: &[u8], start: usize, end: usize, depth: usize, out: &mut Vec<ArtRecord>) {
-    if depth > MAX_OFFICE_ART_DEPTH {
-        return;
-    }
-    let mut pos = start;
-    while pos + 8 <= end {
-        let rec_ver_instance = u16::from_le_bytes([data[pos], data[pos + 1]]);
-        let rec_type = u16::from_le_bytes([data[pos + 2], data[pos + 3]]);
-        let rec_len = u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]) as usize;
-        let content_start = pos + 8;
-        let Some(content_end) = content_start.checked_add(rec_len).filter(|&candidate| candidate <= end) else {
-            return;
-        };
-        out.push(ArtRecord {
-            rec_instance: rec_ver_instance >> 4,
-            rec_type,
-            content_start,
-            content_end,
-        });
-        if rec_ver_instance & 0x000F == 0x0F {
-            collect_art_records(data, content_start, content_end, depth + 1, out);
-        }
-        pos = content_end;
-    }
-}
-
-/// The `Pictures`-stream offset of every blip, in `BStoreContainer` order, so that a
-/// shape's 1-based `pib` indexes straight into the result.
-fn blip_stream_offsets(data: &[u8], records: &[ArtRecord]) -> Vec<u32> {
-    records
-        .iter()
-        .filter(|record| record.rec_type == MSOFBT_BSE)
-        .filter_map(|record| {
-            let at = record.content_start.checked_add(BSE_FO_DELAY_OFFSET)?;
-            (at.checked_add(4)? <= record.content_end).then(|| read_u32_le(data, at))?
-        })
-        .collect()
-}
-
 /// The blip indices (`pib`) referenced by shapes inside one slide's byte range.
 ///
 /// Reading `pib` wherever it appears in the slide's property tables -- rather than only
@@ -1090,32 +1007,11 @@ fn blip_stream_offsets(data: &[u8], records: &[ArtRecord]) -> Vec<u32> {
 /// placed as the fill of an ordinary autoshape carries the same property and displays the
 /// same blip on the same slide. ~keep
 fn slide_blip_indices(data: &[u8], records: &[ArtRecord], slide_start: usize, slide_end: usize) -> Vec<u32> {
-    let mut indices = Vec::new();
-    for record in records
+    records
         .iter()
-        .filter(|record| MSOFBT_OPT.contains(&record.rec_type))
         .filter(|record| record.content_start >= slide_start && record.content_end <= slide_end)
-    {
-        for entry in 0..record.rec_instance as usize {
-            let Some(at) = entry
-                .checked_mul(FOPT_ENTRY_LEN)
-                .and_then(|o| record.content_start.checked_add(o))
-            else {
-                break;
-            };
-            if at + FOPT_ENTRY_LEN > record.content_end {
-                break;
-            }
-            let opid = u16::from_le_bytes([data[at], data[at + 1]]);
-            if opid & FOPT_PROPERTY_ID_MASK == MSO_PROPERTY_PIB
-                && let Some(pib) = read_u32_le(data, at + 2)
-                && pib > 0
-            {
-                indices.push(pib);
-            }
-        }
-    }
-    indices
+        .flat_map(|record| pib_values(data, record))
+        .collect()
 }
 
 /// Map each blip's `Pictures`-stream offset to the slide that displays it (#1620).
@@ -1131,9 +1027,9 @@ fn picture_slide_numbers(data: &[u8], live_slides: Option<&[usize]>) -> std::col
     let mut records = Vec::new();
     collect_art_records(data, 0, data.len(), 0, &mut records);
 
-    let blip_offsets = blip_stream_offsets(data, &records);
+    let blips = BlipStore::from_bse_records(data, &records);
     let mut by_offset = std::collections::HashMap::new();
-    if blip_offsets.is_empty() {
+    if blips.is_empty() {
         return by_offset;
     }
 
@@ -1159,7 +1055,7 @@ fn picture_slide_numbers(data: &[u8], live_slides: Option<&[usize]>) -> std::col
     for (index, (slide_start, slide_end)) in slide_ranges.iter().enumerate() {
         let slide_number = index as u32 + 1;
         for pib in slide_blip_indices(data, &records, *slide_start, *slide_end) {
-            if let Some(&offset) = blip_offsets.get(pib as usize - 1) {
+            if let Some(offset) = blips.fo_delay(pib) {
                 by_offset.entry(offset).or_insert(slide_number);
             }
         }
@@ -1251,12 +1147,7 @@ fn extract_blip_image(
         content_end,
     } = record;
 
-    // One `rgbUid` (16 bytes) + `tag` (1 byte) = 17-byte header, or
-    // two `rgbUid`s + `tag` = 33 bytes; per MS-ODRAW 2.2.27-2.2.29
-    // the low bit of `recInstance` is what distinguishes the two
-    // UID counts for every raster blip type (e.g. JPEG 0x46A vs
-    // 0x46B, PNG 0x6E0 vs 0x6E1, DIB 0x7A8 vs 0x7A9).
-    let header_len = if rec_instance & 0x1 == 1 { 33 } else { 17 };
+    let header_len = blip_header_len(rec_instance);
     validate_blip_picture_len(pos, rec_len, header_len, warnings)?;
 
     let picture_start = content_start + header_len;
@@ -1322,12 +1213,7 @@ fn extract_pictures_from_stream(
         let content_start = pos + 8;
         let content_end = content_start + rec_len;
 
-        let format: Option<Cow<'static, str>> = match rec_type {
-            RT_BLIP_JPEG | RT_BLIP_JPEG_ALT => Some(Cow::Borrowed("jpeg")),
-            RT_BLIP_PNG => Some(Cow::Borrowed("png")),
-            RT_BLIP_DIB => Some(Cow::Borrowed("dib")),
-            _ => None,
-        };
+        let format: Option<Cow<'static, str>> = blip_format(rec_type).map(|format| Cow::Borrowed(format.name()));
 
         let record = BlipRecordHeader {
             pos,
@@ -1349,12 +1235,6 @@ fn extract_pictures_from_stream(
     images
 }
 
-/// `OfficeArtSpgrContainer`: a group of shapes. PowerPoint 97-2003 draws a table as one.
-const MSOFBT_SPGR_CONTAINER: u16 = 0xF003;
-/// `OfficeArtSpContainer`: one shape.
-const MSOFBT_SP_CONTAINER: u16 = 0xF004;
-/// `OfficeArtFSP`; its `recInstance` is the shape type.
-const MSOFBT_FSP: u16 = 0xF00A;
 /// `OfficeArtChildAnchor`: a shape's rectangle (left, top, right, bottom) inside its group.
 const MSOFBT_CHILD_ANCHOR: u16 = 0xF00F;
 /// `tableProperties`, set on the shape of the group that draws a table.
@@ -1386,7 +1266,7 @@ fn read_table(data: &[u8], start: usize, end: usize) -> Option<Vec<Vec<String>>>
     let children = child_records(data, start, end);
     let (group_shape, shapes) = children.split_first()?;
     if group_shape.rec_type != MSOFBT_SP_CONTAINER
-        || !shape_has_property(data, group_shape, MSO_PROPERTY_TABLE_PROPERTIES)
+        || shape_property(data, group_shape, MSO_PROPERTY_TABLE_PROPERTIES).is_none()
     {
         return None;
     }
@@ -1455,43 +1335,6 @@ fn read_table(data: &[u8], start: usize, end: usize) -> Option<Vec<Vec<String>>>
             .map(|row| kept.iter().map(|&c| row[c].clone()).collect())
             .collect(),
     )
-}
-
-/// The records directly inside `data[start..end]`, without descending into containers.
-fn child_records(data: &[u8], start: usize, end: usize) -> Vec<ArtRecord> {
-    let mut out = Vec::new();
-    let mut pos = start;
-    while pos + 8 <= end {
-        let rec_ver_instance = u16::from_le_bytes([data[pos], data[pos + 1]]);
-        let rec_type = u16::from_le_bytes([data[pos + 2], data[pos + 3]]);
-        let rec_len = u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]) as usize;
-        let content_start = pos + 8;
-        let Some(content_end) = content_start.checked_add(rec_len).filter(|&candidate| candidate <= end) else {
-            break;
-        };
-        out.push(ArtRecord {
-            rec_instance: rec_ver_instance >> 4,
-            rec_type,
-            content_start,
-            content_end,
-        });
-        pos = content_end;
-    }
-    out
-}
-
-/// Whether a shape's own property tables set `property`.
-fn shape_has_property(data: &[u8], shape: &ArtRecord, property: u16) -> bool {
-    child_records(data, shape.content_start, shape.content_end)
-        .iter()
-        .filter(|record| MSOFBT_OPT.contains(&record.rec_type))
-        .any(|record| {
-            (0..record.rec_instance as usize).any(|entry| {
-                let at = record.content_start + entry * FOPT_ENTRY_LEN;
-                at + FOPT_ENTRY_LEN <= record.content_end
-                    && u16::from_le_bytes([data[at], data[at + 1]]) & FOPT_PROPERTY_ID_MASK == property
-            })
-        })
 }
 
 /// A cell's text: its text atoms, cleaned, on one line.

@@ -2,11 +2,12 @@
 
 use super::{DOC_WARNING_SOURCE, DocExtractionResult, DocParagraph};
 use crate::error::{Result, XbergError};
+use crate::extraction::office_art::{BlipFormat, find_blip};
 use crate::extractors::security::{SecurityBudget, SecurityLimits};
 use crate::types::{ExtractedImage, ProcessingWarning};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-// [MS-DOC] CHPX/PICF and [MS-ODRAW] OfficeArt record identifiers. ~keep
+// [MS-DOC] CHPX/PICF record identifiers. ~keep
 const CHPX_FIB_PAIR: usize = 12;
 const FKP_PAGE_BYTES: usize = 512;
 const FKP_PAGE_MASK: u32 = 0x003f_ffff;
@@ -16,16 +17,6 @@ const MM_SHAPEFILE: u16 = 102;
 const SPRM_C_SPEC: u16 = 0x0855;
 const SPRM_C_DATA: u16 = 0x0806;
 const SPRM_C_PIC_LOCATION: u16 = 0x6a03;
-const OFFICE_ART_HEADER_BYTES: usize = 8;
-const OFFICE_ART_CONTAINER_VERSION: u16 = 15;
-const OFFICE_ART_BSE: u16 = 0xf007;
-const OFFICE_ART_JPEG: u16 = 0xf01d;
-const OFFICE_ART_JPEG_ALT: u16 = 0xf02a;
-const OFFICE_ART_PNG: u16 = 0xf01e;
-const BSE_HEADER_BYTES: usize = 36;
-const BSE_NAME_LENGTH_OFFSET: usize = 33;
-const BLIP_SINGLE_UID_BYTES: usize = 17;
-const BLIP_DOUBLE_UID_BYTES: usize = 33;
 
 pub(crate) struct DocWithImages {
     pub text: DocExtractionResult,
@@ -337,66 +328,13 @@ fn read_picture(
         },
         _ => return Ok(None),
     };
-    match data.get(start..) {
-        Some(records) => raster_record(records, budget),
-        None => Ok(None),
-    }
-}
-
-fn raster_record(data: &[u8], budget: &mut SecurityBudget) -> Result<Option<ExtractedImage>> {
-    let mut position = 0;
-    while position < data.len() {
-        budget.step().map_err(validation)?;
-        let (Some(packed), Some(kind), Some(length)) = (
-            word(data, position),
-            word(data, position + 2),
-            dword(data, position + 4),
-        ) else {
-            return Ok(None);
-        };
-        let start = position + OFFICE_ART_HEADER_BYTES;
-        let Some(end) = start.checked_add(length as usize).filter(|end| *end <= data.len()) else {
-            return Ok(None);
-        };
-        let payload = &data[start..end];
-        if packed & OFFICE_ART_CONTAINER_VERSION == OFFICE_ART_CONTAINER_VERSION || kind == OFFICE_ART_BSE {
-            let children = if kind == OFFICE_ART_BSE {
-                let Some(name_length) = payload.get(BSE_NAME_LENGTH_OFFSET) else {
-                    return Ok(None);
-                };
-                payload.get(BSE_HEADER_BYTES + usize::from(*name_length)..)
-            } else {
-                Some(payload)
-            };
-            budget.enter().map_err(validation)?;
-            let result = match children {
-                Some(children) => raster_record(children, budget)?,
-                None => None,
-            };
-            budget.leave();
-            if result.is_some() {
-                return Ok(result);
-            }
-        } else if let Some(format) = match kind {
-            OFFICE_ART_JPEG | OFFICE_ART_JPEG_ALT => Some("jpeg"),
-            OFFICE_ART_PNG => Some("png"),
-            _ => None,
-        } {
-            let header = if (packed >> 4) & 1 == 1 {
-                BLIP_DOUBLE_UID_BYTES
-            } else {
-                BLIP_SINGLE_UID_BYTES
-            };
-            let Some(bytes) = payload.get(header..).filter(|bytes| !bytes.is_empty()) else {
-                return Ok(None);
-            };
-            return Ok(Some(ExtractedImage {
-                data: bytes::Bytes::copy_from_slice(bytes),
-                format: format.into(),
-                ..Default::default()
-            }));
-        }
-        position = end;
-    }
-    Ok(None)
+    let Some(records) = data.get(start..) else {
+        return Ok(None);
+    };
+    let blip = find_blip(records, &[BlipFormat::Jpeg, BlipFormat::Png], budget).map_err(validation)?;
+    Ok(blip.map(|(format, bytes)| ExtractedImage {
+        data: bytes::Bytes::copy_from_slice(bytes),
+        format: format.name().into(),
+        ..Default::default()
+    }))
 }
