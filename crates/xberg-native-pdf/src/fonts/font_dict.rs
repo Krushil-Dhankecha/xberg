@@ -175,6 +175,10 @@ pub struct FontInfo {
     /// is called per glyph and otherwise re-strips the subset prefix and
     /// re-scans a 15-name table every time.
     pub std14_memo: std::sync::OnceLock<Option<Std14Flags>>,
+    /// Memo of [`FontInfo::best_mapping_provenance`]. A Type 3 font whose glyph
+    /// names do not resolve scans every name against the Adobe Glyph List to
+    /// answer, and the text reader asks per span, cluster and character. ~keep
+    pub mapping_provenance_memo: std::sync::OnceLock<crate::fonts::MappingProvenance>,
     /// Raw `/Differences` glyph names retained by character code (simple fonts).
     /// Populated alongside the `Encoding::Custom` map during `parse_encoding`,
     /// but unlike the Custom map (which stores the *resolved* char) this keeps the
@@ -546,6 +550,12 @@ impl FontInfo {
     /// determine what the character code represents"). Callers compose their own
     /// policy from this (route to OCR, flag the page, keep the raw echo).
     pub fn best_mapping_provenance(&self) -> crate::fonts::MappingProvenance {
+        *self
+            .mapping_provenance_memo
+            .get_or_init(|| self.compute_mapping_provenance())
+    }
+
+    fn compute_mapping_provenance(&self) -> crate::fonts::MappingProvenance {
         use crate::fonts::MappingProvenance as P;
         // 1. A present, non-empty /ToUnicode CMap is authoritative (§9.10.2). ~keep
         if self
@@ -1269,6 +1279,7 @@ impl FontInfo {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names,
             wmode,
             cid_vertical_metrics,
@@ -6611,6 +6622,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -6653,6 +6665,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -6698,6 +6711,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -6740,6 +6754,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -6787,6 +6802,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7046,6 +7062,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7106,6 +7123,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7153,6 +7171,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7197,6 +7216,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7341,6 +7361,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7472,6 +7493,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7521,6 +7543,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7565,6 +7588,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7613,6 +7637,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7657,6 +7682,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7701,6 +7727,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7749,6 +7776,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7793,6 +7821,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7837,6 +7866,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7885,6 +7915,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7928,6 +7959,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -7971,6 +8003,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8014,6 +8047,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8057,6 +8091,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8100,6 +8135,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8143,6 +8179,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8186,6 +8223,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8229,6 +8267,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8478,6 +8517,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8531,6 +8571,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8582,6 +8623,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8640,6 +8682,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8695,6 +8738,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -8776,6 +8820,41 @@ mod tests {
             ]);
         });
         assert_eq!(f.best_mapping_provenance(), crate::fonts::MappingProvenance::Fallback);
+    }
+
+    #[test]
+    fn best_mapping_provenance_scans_glyph_names_once_per_font() {
+        let mut f = make_font(|f| {
+            f.subtype = "Type3".to_string();
+            f.to_unicode = None;
+            f.diff_glyph_names = std::collections::HashMap::from([(2u8, "g02".to_string())]);
+        });
+        assert!(f.mapping_provenance_memo.get().is_none());
+        assert_eq!(f.best_mapping_provenance(), crate::fonts::MappingProvenance::Fallback);
+        assert_eq!(
+            f.mapping_provenance_memo.get(),
+            Some(&crate::fonts::MappingProvenance::Fallback)
+        );
+        // A name that resolves would change a fresh scan. The stored answer wins.
+        f.diff_glyph_names.insert(3u8, "A".to_string());
+        assert_eq!(f.best_mapping_provenance(), crate::fonts::MappingProvenance::Fallback);
+    }
+
+    #[test]
+    fn best_mapping_provenance_memo_keeps_resolving_type3_names_encoding_name() {
+        let f = make_font(|f| {
+            f.subtype = "Type3".to_string();
+            f.to_unicode = None;
+            f.diff_glyph_names = std::collections::HashMap::from([(2u8, "g02".to_string()), (3u8, "A".to_string())]);
+        });
+        assert_eq!(
+            f.best_mapping_provenance(),
+            crate::fonts::MappingProvenance::EncodingName
+        );
+        assert_eq!(
+            f.best_mapping_provenance(),
+            crate::fonts::MappingProvenance::EncodingName
+        );
     }
 
     #[test]
@@ -10754,6 +10833,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -10803,6 +10883,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -10851,6 +10932,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -10897,6 +10979,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -10949,6 +11032,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,
@@ -11093,6 +11177,7 @@ mod tests {
             weight_memo: std::sync::OnceLock::new(),
             italic_memo: std::sync::OnceLock::new(),
             std14_memo: std::sync::OnceLock::new(),
+            mapping_provenance_memo: std::sync::OnceLock::new(),
             diff_glyph_names: std::collections::HashMap::new(),
             wmode: 0,
             cid_vertical_metrics: None,

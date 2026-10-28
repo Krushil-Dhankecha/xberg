@@ -176,6 +176,7 @@ fn create_font_with_encoding(encoding: Encoding) -> FontInfo {
         weight_memo: std::sync::OnceLock::new(),
         italic_memo: std::sync::OnceLock::new(),
         std14_memo: std::sync::OnceLock::new(),
+        mapping_provenance_memo: std::sync::OnceLock::new(),
         diff_glyph_names: std::collections::HashMap::new(),
         wmode: 0,
         cid_vertical_metrics: None,

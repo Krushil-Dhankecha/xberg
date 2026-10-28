@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TrueTypeFont::num_glyphs()` caps larger upstream counts at 65,535; width-table work stays bounded to that range.
   Font ascenders and descenders use normalized above/below-baseline signs.
 
+### Fixed
+
+- **(pdf): A Type 3 font with unresolved glyph names no longer rescans every glyph name for each character.**
+  The font now answers where its text mapping comes from once, so long documents of this kind extract in seconds
+  instead of minutes. The extracted text is unchanged. (GH#2307)
+
 ### Security
 
 - **(excel): Enforce spreadsheet limits before worksheet buffers and table grids are allocated.**
