@@ -2589,6 +2589,79 @@ pub(super) fn process_image_with_cache(
     process_image_resolved(image_bytes, config, cache, api_pool, output_format)
 }
 
+/// The script name Tesseract's orientation and script detection reports for Chinese text.
+const OSD_HAN_SCRIPT: &str = "Han";
+
+/// The Tesseract language that reads Chinese, added when script detection reports Han.
+const HAN_LANGUAGE: &str = "chi_sim";
+
+/// `true` when the page's script is Han, by Tesseract's own orientation and script detection.
+///
+/// Detection needs `osd.traineddata` next to the language data. Without it the page is not Han
+/// as far as this function can tell, and the first OCR pass stands. Detection reads the page
+/// image again and does not touch the recognition result of the first pass.
+fn page_script_is_han(
+    image_bytes: &[u8],
+    config: &TesseractConfig,
+    api_pool: &Arc<TesseractApiPool>,
+) -> Result<bool, OcrError> {
+    let security_limits = security_limits_for_ocr(config, None);
+    let rgb_image = crate::extraction::image::load_image_for_ocr(image_bytes, &security_limits)
+        .map_err(|e| OcrError::ImageProcessingFailed(e.to_string()))?
+        .into_rgb8();
+    let (width, height) = rgb_image.dimensions();
+
+    let languages: Vec<String> = config.language.split('+').map(|lang| lang.trim().to_string()).collect();
+    let tessdata_path = resolve_tessdata_path(&languages, config.tessdata_path.as_deref())?;
+    if !std::path::Path::new(&tessdata_path).join("osd.traineddata").is_file() {
+        return Ok(false);
+    }
+
+    let api = api_pool.checkout(&tessdata_path, &config.language, config.oem)?;
+    api.set_image(rgb_image.as_raw(), width as i32, height as i32, 3, (width * 3) as i32)
+        .map_err(|error| OcrError::ProcessingFailed(format!("Failed to set image for script detection: {error}")))?;
+    let detected = api.detect_os();
+    let _ = api.clear();
+    Ok(matches!(detected, Ok((_, _, ref script, _)) if script == OSD_HAN_SCRIPT))
+}
+
+/// The config for a second OCR pass that also reads Chinese, or `None` when the first pass
+/// needs none (GH#2300).
+///
+/// A page whose first pass is noisy (mean confidence under the quality line) and whose languages
+/// do not read Han is run through script detection. When detection reports Han, the second pass
+/// adds `chi_sim` to the languages. The configured languages stay and keep their order. A page
+/// the first pass read well, or that has no mean confidence, costs nothing extra.
+fn han_retry_config(
+    image_bytes: &[u8],
+    config: &TesseractConfig,
+    first_pass: &OcrExtractionResult,
+    api_pool: &Arc<TesseractApiPool>,
+) -> Option<TesseractConfig> {
+    let languages: Vec<&str> = config.language.split('+').map(str::trim).collect();
+    if crate::ocr_script::languages_are_wildcard(&languages)
+        || crate::ocr_script::languages_cover_script(&languages, crate::ocr_script::Script::Han)
+    {
+        return None;
+    }
+    let mean_confidence = first_pass.metadata.get("mean_text_conf")?.as_f64()?;
+    if mean_confidence >= crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence {
+        return None;
+    }
+    match page_script_is_han(image_bytes, config, api_pool) {
+        Ok(true) => {
+            let mut retry = config.clone();
+            retry.language = format!("{}+{HAN_LANGUAGE}", config.language);
+            Some(retry)
+        }
+        Ok(false) => None,
+        Err(error) => {
+            tracing::debug!(%error, "script detection failed; keeping the first OCR pass");
+            None
+        }
+    }
+}
+
 /// Inner implementation operating on an already-resolved config.
 ///
 /// Handles cache lookup, OCR execution, and cache storage. Callers are
@@ -2634,7 +2707,14 @@ fn process_image_resolved(
         ..Default::default()
     });
 
-    let result = perform_ocr(image_bytes, config, api_pool, extraction_config.as_ref())?;
+    let mut result = perform_ocr(image_bytes, config, api_pool, extraction_config.as_ref())?;
+
+    if let Some(han_config) = han_retry_config(image_bytes, config, &result, api_pool)
+        && let Ok(han_result) = perform_ocr(image_bytes, &han_config, api_pool, extraction_config.as_ref())
+        && !han_result.content.trim().is_empty()
+    {
+        result = han_result;
+    }
 
     if config.use_cache
         && let Err(e) = cache.set_cached_result(&image_hash, "tesseract", &config_str, output_format.as_ref(), &result)
