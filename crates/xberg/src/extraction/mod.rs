@@ -110,7 +110,7 @@ pub mod ooxml_constants;
 #[cfg(feature = "office")]
 pub mod ooxml_embedded;
 
-#[cfg(feature = "office")]
+#[cfg(any(feature = "office", feature = "ocr", feature = "image-encode"))]
 pub mod image_format;
 
 #[cfg(all(feature = "ocr", feature = "tokio-runtime"))]

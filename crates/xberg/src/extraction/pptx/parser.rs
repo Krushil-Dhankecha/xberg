@@ -7,6 +7,7 @@ use ahash::AHashMap;
 use roxmltree::{Document, Node};
 
 use crate::error::{Result, XbergError};
+use crate::text::number_format::general_number_text;
 use crate::text::utf8_validation;
 
 use super::elements::{
@@ -325,9 +326,22 @@ pub(super) fn parse_chart_text(xml_data: &[u8]) -> Result<Option<String>> {
     let values: Vec<String> = doc
         .descendants()
         .filter(|n| n.tag_name().namespace() == Some(CHART_NAMESPACE) && n.tag_name().name() == "v")
-        .filter_map(|n| n.text())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter_map(|n| {
+            let text = n.text()?.trim();
+            if text.is_empty() {
+                return None;
+            }
+            // A number cache stores a double with 17 digits: show it as PowerPoint does. ~keep
+            let is_number = n.ancestors().any(|a| {
+                a.tag_name().namespace() == Some(CHART_NAMESPACE)
+                    && matches!(a.tag_name().name(), "numCache" | "numLit")
+            });
+            Some(if is_number {
+                general_number_text(text).into_owned()
+            } else {
+                text.to_string()
+            })
+        })
         .collect();
 
     let mut parts = Vec::new();
@@ -939,6 +953,56 @@ pub(super) fn parse_presentation_rels(rels_data: &[u8]) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    use super::parse_chart_text;
+
+    fn chart(plot: &str) -> Vec<u8> {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:ser>{plot}</c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn chart_number_cache_prints_the_general_format() {
+        let xml = chart(
+            r#"<c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Plan</c:v></c:pt></c:strCache></c:strRef></c:tx>
+<c:val><c:numRef><c:numCache><c:formatCode>0.00</c:formatCode>
+<c:pt idx="0"><c:v>1.1000000000000001</c:v></c:pt>
+<c:pt idx="1"><c:v>0.30000000000000004</c:v></c:pt>
+<c:pt idx="2"><c:v>118.99999999999999</c:v></c:pt>
+<c:pt idx="3"><c:v>42</c:v></c:pt>
+<c:pt idx="4"><c:v>42.0</c:v></c:pt>
+<c:pt idx="5"><c:v>1E-07</c:v></c:pt>
+<c:pt idx="6"><c:v>-0.5</c:v></c:pt>
+<c:pt idx="7"><c:v>#N/A</c:v></c:pt></c:numCache></c:numRef></c:val>"#,
+        );
+
+        let text = parse_chart_text(&xml).unwrap().unwrap();
+
+        assert_eq!(text, "Plan, 1.1, 0.3, 119, 42, 42.0, 1E-07, -0.5, #N/A");
+    }
+
+    #[test]
+    fn chart_number_literal_prints_the_general_format() {
+        let xml = chart(r#"<c:val><c:numLit><c:pt idx="0"><c:v>2.2000000000000002</c:v></c:pt></c:numLit></c:val>"#);
+
+        assert_eq!(parse_chart_text(&xml).unwrap().unwrap(), "2.2");
+    }
+
+    #[test]
+    fn chart_text_cache_stays_as_written() {
+        let xml = chart(
+            r#"<c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>1.1000000000000001</c:v></c:pt></c:strCache></c:strRef></c:tx>
+<c:cat><c:strLit><c:pt idx="0"><c:v>2.2000000000000002</c:v></c:pt></c:strLit></c:cat>"#,
+        );
+
+        assert_eq!(
+            parse_chart_text(&xml).unwrap().unwrap(),
+            "1.1000000000000001, 2.2000000000000002"
+        );
+    }
+
     #[test]
     fn test_slide_paths_sorted_numerically() {
         let mut paths = vec![

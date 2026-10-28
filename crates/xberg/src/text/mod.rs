@@ -1,6 +1,10 @@
 /// UTF-8 validation and safe decoding helpers.
 pub mod utf8_validation;
 
+#[cfg(any(feature = "excel", feature = "excel-wasm", feature = "office"))]
+/// Printing of a double as a spreadsheet or presentation program shows it.
+pub(crate) mod number_format;
+
 #[cfg(any(feature = "office", feature = "email"))]
 /// Windows codepage number to `encoding_rs` encoding mapping.
 pub(crate) mod windows_codepage;

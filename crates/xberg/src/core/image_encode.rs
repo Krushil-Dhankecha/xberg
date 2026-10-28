@@ -232,13 +232,16 @@ fn target_matches_format(target: ImageOutputFormat, format: &str) -> bool {
 fn is_untranslatable(format: &str) -> bool {
     let lc = format.to_ascii_lowercase();
     let s = lc.as_str();
+    if crate::extraction::image_format::is_metafile_format(s) {
+        return true;
+    }
     #[cfg(not(feature = "svg"))]
     {
-        matches!(s, "svg" | "emf" | "wmf" | "jpeg2000" | "jp2" | "j2k")
+        matches!(s, "svg" | "jpeg2000" | "jp2" | "j2k")
     }
     #[cfg(feature = "svg")]
     {
-        matches!(s, "emf" | "wmf" | "jpeg2000" | "jp2" | "j2k")
+        matches!(s, "jpeg2000" | "jp2" | "j2k")
     }
 }
 

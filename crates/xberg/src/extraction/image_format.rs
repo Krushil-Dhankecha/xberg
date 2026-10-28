@@ -29,6 +29,15 @@ pub(crate) fn detect_image_format(data: &[u8]) -> Cow<'static, str> {
     }
 }
 
+/// Whether `format`, a name from [`detect_image_format`], is a Windows metafile (EMF or WMF).
+///
+/// A metafile stores drawing commands, not pixels. No decoder in the workspace reads one, so a
+/// caller that needs pixels (OCR, re-encoding) must leave it alone. ~keep
+#[cfg(any(feature = "ocr", feature = "image-encode"))]
+pub(crate) fn is_metafile_format(format: &str) -> bool {
+    matches!(format, "emf" | "wmf")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +103,15 @@ mod tests {
     #[test]
     fn test_detect_empty() {
         assert_eq!(detect_image_format(b""), "unknown");
+    }
+
+    #[cfg(any(feature = "ocr", feature = "image-encode"))]
+    #[test]
+    fn test_is_metafile_format_names_only_emf_and_wmf() {
+        assert!(is_metafile_format("emf"));
+        assert!(is_metafile_format("wmf"));
+        for other in ["png", "jpeg", "svg", "unknown", "EMF", ""] {
+            assert!(!is_metafile_format(other), "{other} is no metafile");
+        }
     }
 }
