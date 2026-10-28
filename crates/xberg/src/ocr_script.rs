@@ -49,22 +49,17 @@ pub(crate) fn scripts_for_language(lang: &str) -> Option<&'static [Script]> {
 
 /// The Tesseract language that reads a script, for a script no configured language covers.
 ///
-/// Latin has no entry: it is the default and needs no help. Han maps to Simplified Chinese,
-/// the model the measurements in GH#2300 used.
+/// Only Khmer and Han have an entry: the two scripts of GH#2300, whose pages come back as Latin
+/// letters when they are read with `eng`. Every other script returns `None`, so a document
+/// that only holds a few Greek or Cyrillic letters (maths, names) does not read its Latin pages
+/// with a second alphabet that has look-alike letters. A script is added here with its own
+/// measurement on the harness corpora, not by extending the table. ~keep
 #[cfg(feature = "ocr-pipeline")]
 pub(crate) fn tesseract_language_for_script(script: Script) -> Option<&'static str> {
     match script {
-        Script::Latin => None,
-        Script::Cyrillic => Some("rus"),
-        Script::Greek => Some("ell"),
-        Script::Arabic => Some("ara"),
-        Script::Hebrew => Some("heb"),
-        Script::Devanagari => Some("hin"),
-        Script::Thai => Some("tha"),
         Script::Khmer => Some("khm"),
         Script::Han => Some("chi_sim"),
-        Script::Kana => Some("jpn"),
-        Script::Hangul => Some("kor"),
+        _ => None,
     }
 }
 
@@ -103,23 +98,26 @@ mod tests {
     }
 
     #[test]
-    fn every_script_but_latin_has_an_ocr_language_that_covers_it() {
-        for script in [
-            Script::Cyrillic,
-            Script::Greek,
-            Script::Arabic,
-            Script::Hebrew,
-            Script::Devanagari,
-            Script::Thai,
-            Script::Khmer,
-            Script::Han,
-            Script::Kana,
-            Script::Hangul,
-        ] {
+    fn khmer_and_han_have_an_ocr_language_that_covers_them() {
+        for script in [Script::Khmer, Script::Han] {
             let lang = tesseract_language_for_script(script).expect("a language for the script");
             assert!(languages_cover_script(&[lang], script), "{lang} must cover {script:?}");
         }
-        assert_eq!(tesseract_language_for_script(Script::Latin), None);
+    }
+
+    /// Greek and Cyrillic letters have Latin look-alikes: adding their language to a Latin
+    /// document turns Latin letters into look-alikes (measured on the harness corpora).
+    #[test]
+    fn a_script_with_latin_look_alikes_adds_no_language() {
+        for script in [
+            Script::Latin,
+            Script::Greek,
+            Script::Cyrillic,
+            Script::Thai,
+            Script::Hangul,
+        ] {
+            assert_eq!(tesseract_language_for_script(script), None, "{script:?}");
+        }
     }
 
     #[test]

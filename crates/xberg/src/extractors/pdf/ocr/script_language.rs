@@ -191,6 +191,16 @@ mod tests {
     }
 
     #[test]
+    fn a_greek_or_cyrillic_text_layer_adds_no_language() {
+        let greek = "Αλφα βήτα γάμμα δέλτα έψιλον ζήτα ήτα θήτα ιώτα κάππα λάμδα";
+        let cyrillic = "Съешь же ещё этих мягких французских булок да выпей чаю";
+        for text in [greek, cyrillic] {
+            let config = config_with(Some(OcrConfig::default()));
+            assert!(config_with_text_layer_language(&config, text).is_none(), "{text}");
+        }
+    }
+
+    #[test]
     fn the_wildcard_language_adds_nothing() {
         let ocr = OcrConfig {
             language: vec!["all".to_string()],
