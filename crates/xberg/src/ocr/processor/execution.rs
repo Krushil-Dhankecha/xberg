@@ -2592,6 +2592,10 @@ pub(super) fn process_image_with_cache(
 /// The script name Tesseract's orientation and script detection reports for Chinese text.
 const OSD_HAN_SCRIPT: &str = "Han";
 
+/// The Tesseract data set that holds the orientation and script model. An engine started with
+/// it, and not with a recognition language, is the one that reports a script.
+const OSD_LANGUAGE: &str = "osd";
+
 /// The Tesseract language that reads Chinese, added when script detection reports Han.
 const HAN_LANGUAGE: &str = "chi_sim";
 
@@ -2617,7 +2621,8 @@ fn page_script_is_han(
         return Ok(false);
     }
 
-    let api = api_pool.checkout(&tessdata_path, &config.language, config.oem)?;
+    let api = api_pool.checkout(&tessdata_path, OSD_LANGUAGE, config.oem)?;
+    let _ = api.set_page_seg_mode(TessPageSegMode::PSM_OSD_ONLY);
     api.set_image(rgb_image.as_raw(), width as i32, height as i32, 3, (width * 3) as i32)
         .map_err(|error| OcrError::ProcessingFailed(format!("Failed to set image for script detection: {error}")))?;
     let detected = api.detect_os();
