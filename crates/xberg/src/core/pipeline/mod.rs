@@ -82,8 +82,22 @@ fn image_ocr_positions(doc: &InternalDocument) -> Vec<usize> {
     doc.images
         .iter()
         .enumerate()
-        .filter_map(|(position, image)| (!should_skip_pdf_image_ocr(doc, image)).then_some(position))
+        .filter_map(|(position, image)| {
+            (!should_skip_pdf_image_ocr(doc, image) && !is_metafile_picture(image)).then_some(position)
+        })
         .collect()
+}
+
+/// Whether the bytes of a picture are an EMF or WMF metafile.
+///
+/// A metafile holds drawing commands, not pixels, and no decoder reads one, so OCR on it can
+/// only fail. The check sniffs the bytes: the format label can be wrong, because the ODT
+/// extractor labels every extension it does not list as `png`. ~keep
+#[cfg(all(feature = "ocr", feature = "tokio-runtime"))]
+fn is_metafile_picture(image: &crate::types::ExtractedImage) -> bool {
+    use crate::extraction::image_format::{detect_image_format, is_metafile_format};
+
+    is_metafile_format(&detect_image_format(&image.data))
 }
 
 /// Whether the OCR read of an image file already gave the document text or a table.

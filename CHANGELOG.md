@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **(doc): Preserve superscript and subscript formatting inside legacy Word table cells.**
   Plain cell text remains unchanged; Markdown and HTML retain script formatting across cell paragraphs. (#2275)
 
+- **(ocr): Skip embedded EMF and WMF pictures instead of reporting an OCR failure for each one.**
+  A metafile holds drawing commands, not pixels, so no OCR reader can decode it. The picture stays in the document and `processing_warnings` no longer carries `Could not determine image format` for it. (GH#2297)
 - **(csv): Enforce table-cell limits against padded dimensions before retaining rows.** (#2296)
 - **(pdf): Preserve prose superscripts and subscripts when table detection is enabled.** (#2275)
 - **(docx): Preserve equations as math in table cells and table Markdown without changing public structs.** (#2256)

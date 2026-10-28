@@ -2535,6 +2535,77 @@ mod full_page_image_ocr_tests {
     }
 }
 
+/// `image_ocr_positions` leaves a metafile picture out: OCR cannot read drawing commands.
+#[cfg(all(feature = "ocr", feature = "tokio-runtime"))]
+mod metafile_picture_ocr_eligibility_tests {
+    use bytes::Bytes;
+
+    use super::image_ocr_positions;
+    use crate::types::ExtractedImage;
+    use crate::types::internal::InternalDocument;
+
+    /// An 88-byte EMF header: record type 1, record size 88, signature ` EMF` at offset 40.
+    fn emf_bytes() -> Vec<u8> {
+        let mut data = vec![0u8; 88];
+        data[0] = 1;
+        data[4] = 88;
+        data[40..44].copy_from_slice(b" EMF");
+        data
+    }
+
+    /// The placeable WMF key and nothing more: the sniffer reads only the signature.
+    fn wmf_bytes() -> Vec<u8> {
+        let mut data = vec![0xD7, 0xCD, 0xC6, 0x9A];
+        data.resize(40, 0);
+        data
+    }
+
+    fn picture(data: Vec<u8>, format: &'static str) -> ExtractedImage {
+        ExtractedImage {
+            data: Bytes::from(data),
+            format: format.into(),
+            ..Default::default()
+        }
+    }
+
+    fn document(pictures: Vec<ExtractedImage>) -> InternalDocument {
+        let mut document = InternalDocument::new("pptx");
+        document.images = pictures;
+        document
+    }
+
+    #[test]
+    fn a_metafile_picture_gets_no_image_ocr() {
+        let document = document(vec![picture(emf_bytes(), "emf"), picture(wmf_bytes(), "wmf")]);
+
+        assert_eq!(image_ocr_positions(&document), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn the_bytes_decide_not_the_format_label() {
+        // The ODT extractor labels an EMF or WMF file `png`.
+        let document = document(vec![picture(emf_bytes(), "png"), picture(wmf_bytes(), "png")]);
+
+        assert_eq!(image_ocr_positions(&document), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn other_pictures_keep_image_ocr() {
+        let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let mut truncated_emf = emf_bytes();
+        truncated_emf.truncate(30);
+        let document = document(vec![
+            picture(emf_bytes(), "emf"),
+            picture(png, "png"),
+            picture(b"not a picture".to_vec(), "png"),
+            picture(truncated_emf, "emf"),
+            picture(Vec::new(), "png"),
+        ]);
+
+        assert_eq!(image_ocr_positions(&document), vec![1, 2, 3, 4]);
+    }
+}
+
 /// Smoke tests for `apply_output_format_pass`.
 ///
 /// These operate directly on `ExtractedDocument` without invoking the full extractor,

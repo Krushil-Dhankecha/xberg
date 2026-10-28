@@ -1,7 +1,9 @@
 //! Shared image format detection for Office document extractors.
 
+#[cfg(any(feature = "office", all(feature = "ocr", feature = "tokio-runtime")))]
 use std::borrow::Cow;
 
+#[cfg(any(feature = "office", all(feature = "ocr", feature = "tokio-runtime")))]
 /// Detect image format from raw bytes using magic byte signatures.
 ///
 /// Returns a format string like "jpeg", "png", etc. Used by both DOCX and PPTX extractors.
@@ -29,7 +31,16 @@ pub(crate) fn detect_image_format(data: &[u8]) -> Cow<'static, str> {
     }
 }
 
-#[cfg(test)]
+/// Whether `format`, a name from [`detect_image_format`], is a Windows metafile (EMF or WMF).
+///
+/// A metafile stores drawing commands, not pixels. No decoder in the workspace reads one, so a
+/// caller that needs pixels (OCR, re-encoding) must leave it alone. ~keep
+#[cfg(any(feature = "image-encode", all(feature = "ocr", feature = "tokio-runtime")))]
+pub(crate) fn is_metafile_format(format: &str) -> bool {
+    matches!(format, "emf" | "wmf")
+}
+
+#[cfg(all(test, any(feature = "office", all(feature = "ocr", feature = "tokio-runtime"))))]
 mod tests {
     use super::*;
 
@@ -94,5 +105,15 @@ mod tests {
     #[test]
     fn test_detect_empty() {
         assert_eq!(detect_image_format(b""), "unknown");
+    }
+
+    #[cfg(any(feature = "image-encode", all(feature = "ocr", feature = "tokio-runtime")))]
+    #[test]
+    fn test_is_metafile_format_names_only_emf_and_wmf() {
+        assert!(is_metafile_format("emf"));
+        assert!(is_metafile_format("wmf"));
+        for other in ["png", "jpeg", "svg", "unknown", "EMF", ""] {
+            assert!(!is_metafile_format(other), "{other} is no metafile");
+        }
     }
 }
