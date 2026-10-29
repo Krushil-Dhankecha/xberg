@@ -3114,7 +3114,11 @@ mod tests {
                 spans.extend(stepped_line(text, 60.0, 400.0 - row as f32 * pitch, font_size, tan));
             }
             let text = rebuild_text_from_fragmented_spans(&spans);
-            assert_eq!(baseline_lines(&text), rows, "font size {font_size}, tan {tan}: {text:?}");
+            assert_eq!(
+                baseline_lines(&text),
+                rows,
+                "font size {font_size}, tan {tan}: {text:?}"
+            );
         }
     }
 
@@ -3132,7 +3136,10 @@ mod tests {
             let text = rebuild_text_from_fragmented_spans(&spans);
             let lines = baseline_lines(&text);
             for expected in left.iter().chain(right.iter()) {
-                assert!(lines.contains(expected), "tan {tan}: {expected:?} not a line of {text:?}");
+                assert!(
+                    lines.contains(expected),
+                    "tan {tan}: {expected:?} not a line of {text:?}"
+                );
             }
             assert_eq!(lines.len(), 8, "tan {tan}: {text:?}");
         }
