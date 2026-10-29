@@ -16,10 +16,6 @@ run = [{ task = "e2e:generate" }, { task = "e2e:build" }, { task = "e2e:test" }]
 description = "Run all e2e test suites across all languages"
 run = "alef test --e2e --lang rust,python,node,ruby,php,go,java,csharp,elixir,wasm,dart,kotlin_android,swift,zig"
 
-["e2e:quick"]
-description = "Run quick Rust e2e tests"
-run = "alef test --e2e --lang rust"
-
 ["e2e:lint"]
 description = "Validate e2e fixtures"
 run = "alef e2e validate"

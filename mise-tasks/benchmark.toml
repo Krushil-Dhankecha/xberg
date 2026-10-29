@@ -25,11 +25,6 @@ run = "uv run --no-sync python -m pytest -q tools/benchmark-harness/tests/test_i
 description = "Local head-to-head PDF benchmark: xberg vs liteparse (+docling if installed) with per-document gap report"
 run = "bash tools/benchmark-harness/scripts/bench_local.sh"
 
-["benchmark:local:smoke"]
-description = "Quick smoke of the local head-to-head (small fixture shard) to validate the pipeline end-to-end"
-env = { SHARD = "1/60" }
-run = "bash tools/benchmark-harness/scripts/bench_local.sh"
-
 ["benchmark:models"]
 description = "Compare actual RT-DETR and PP-DocLayoutV3 detector timing and counts"
 run = 'cargo run --locked -p benchmark-harness -- model-benchmark --fixtures "{{vars.bench_fixtures}}"'

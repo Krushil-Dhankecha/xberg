@@ -83,27 +83,11 @@ run = [
 
 [tasks.build]
 description = "Build Rust core library only (debug)"
-run = [{ task = "build:core" }]
-
-[tasks."build:release"]
-description = "Build Rust core library only (release)"
-run = [{ task = "rust:build:release" }]
-
-[tasks."build:core"]
-description = "Build Rust core library only (debug)"
 run = [{ task = "rust:build:dev" }]
-
-[tasks."build:bindings"]
-description = "Build all language bindings"
-run = [{ task = "alef:build" }]
 
 [tasks."build:all"]
 description = "Build Rust core library and all language bindings (debug)"
-run = [{ task = "build:core" }, { task = "build:bindings" }]
-
-[tasks."build:cli"]
-description = "Build the xberg CLI binary"
-run = [{ task = "rust:cli:build" }]
+run = [{ task = "rust:build:dev" }, { task = "alef:build" }]
 
 [tasks.test]
 description = "Run Rust core tests"
@@ -144,10 +128,6 @@ run = "alef test"
 description = "Run all tests with coverage"
 run = [{ task = "rust:test:ci" }, "alef test --coverage"]
 
-[tasks."test:ci"]
-description = "Run all tests with coverage (CI mode, alias for test:cov)"
-run = [{ task = "test:cov" }]
-
 [tasks.lint]
 description = "Lint all code via poly"
 run = "poly lint ."
@@ -184,10 +164,6 @@ run = [
   "alef update --latest || true",
   "gau --update .",
 ]
-
-[tasks."cov:all"]
-description = "Generate coverage for all languages"
-run = [{ task = "rust:test:ci" }, "alef test --coverage"]
 
 [tasks.clean]
 description = "Remove build artifacts across all languages"
@@ -316,10 +292,6 @@ run = ["alef sync-versions --bump patch", { task = "version:sync" }]
 description = "Set explicit version and sync (usage: mise run version:set 4.10.0-rc.1)"
 usage = 'arg "<version>" help="The version to set, e.g. 4.10.0-rc.1"'
 run = ['alef sync-versions --set "$usage_version"', { task = "version:sync" }]
-
-[tasks."versions:sync"]
-description = "Synchronize version from Cargo.toml to all package manifests"
-run = [{ task = "version:sync" }]
 
 # ---- alef --------------------------------------------------------------------------------------
 
