@@ -152,3 +152,16 @@ fn scores_roundtrip_through_json_without_changing_the_metric_values() {
     let decoded: GeometryMetrics = serde_json::from_slice(&serde_json::to_vec(&metrics).unwrap()).unwrap();
     assert_eq!(metrics, decoded);
 }
+
+#[test]
+fn signed_zero_scores_are_stable_ties_instead_of_a_confidence_order() {
+    let metrics = score(
+        &[page(vec![
+            prediction("text", [50., 50., 60., 60.], -0.0),
+            prediction("text", [0., 0., 10., 10.], 0.0),
+        ])],
+        &BTreeSet::new(),
+    )
+    .unwrap();
+    assert_eq!(metrics.mean_ap_50_95, Some(0.5));
+}

@@ -137,7 +137,11 @@ fn page_matches(page: &Page, class: &str, threshold: f64, maximum: usize) -> Vec
         .iter()
         .filter(|prediction| prediction.region.class_name == class)
         .collect();
-    predictions.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+    predictions.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .expect("validated finite confidence")
+    });
     let mut matched = vec![false; truth.len()];
     predictions
         .into_iter()
@@ -167,7 +171,7 @@ fn matches(pages: &[Page], class: &str, threshold: f64, maximum: usize) -> Vec<(
         .into_iter()
         .flat_map(|page| page_matches(page, class, threshold, maximum))
         .collect();
-    matches.sort_by(|a, b| b.0.total_cmp(&a.0));
+    matches.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("validated finite confidence"));
     matches
 }
 
