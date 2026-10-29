@@ -3120,16 +3120,21 @@ types = [
 
   "xberg::engine::structured::rasterize::PageImage",
   "xberg::engine::structured::rasterize::RasterizeError",
+  "xberg::engine::structured::rasterize::RasterizeOptions",
   "xberg::engine::structured::chunk::Batch",
   "xberg::engine::structured::chunk::ChunkerConfig",
   "xberg::engine::structured::schema::Outcome",
   "xberg::engine::structured::schema::MergedOutput",
+  "xberg::engine::structured::schema::ValidationReport",
+  "xberg::engine::structured::schema::BatchValidationReport",
+  "xberg::engine::structured::schema::ValidationError",
   "xberg::engine::structured::citations::CitationSource",
   "xberg::engine::structured::citations::CitedField",
   "xberg::engine::structured::citations::CitationOutput",
   "xberg::engine::structured::prompts::BuiltPrompt",
 
   "xberg::engine::structured::finalize::FinalizedOutput",
+  "xberg::engine::structured::finalize::FinalizationRecovery",
   "xberg::engine::structured::finalize::CitationInputs",
 
   "xberg::engine::parsed::ParsedDocument",
@@ -3157,6 +3162,7 @@ functions = [
   # Composes validate_and_merge into fuse; takes the excluded CitationInputs and
   # returns the excluded FinalizedOutput.
   "merge_and_cite",
+  "finalize_with_recovery",
   # Wraps build_vision_fallback_prompt with the threshold decision; returns
   # Option<BuiltPrompt>, and BuiltPrompt is already excluded above.
   "escalate_if_below_threshold",
@@ -3169,7 +3175,9 @@ functions = [
   "batch_pages",
   "pages_for_call",
   "pages_for_call_with_security_limits",
+  "pages_for_call_with_options",
   "validate_and_merge",
+  "validate_and_report",
   "apply_strategy",
 
   "classify_one",

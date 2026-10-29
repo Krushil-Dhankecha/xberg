@@ -110,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **(bindings): Keep Rust-only structured rendering and recovery APIs outside generated language bindings.**
 - **(ci): Keep Android x86_64 checks compiling when the remote compiler-cache backend is unavailable.**
 - **(excel): Enforce XLSX text limits before cell materialization and apply workbook limits to file inputs.** (#2321)
   Count repeated shared strings against the complete workbook’s text budget.
