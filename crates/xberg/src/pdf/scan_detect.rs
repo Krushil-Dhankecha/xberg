@@ -404,9 +404,9 @@ pub(crate) fn detect(doc: &PdfDocument) -> Option<ScanDetection> {
     let page_count = doc.page_count().ok()?;
 
     let graded = map_pages(page_count, |page_index| {
-        page_signals(doc, page_index)
-            .as_ref()
-            .map_or((0.0, false), |signals| (score_page(signals), drawn_prose_decides(signals)))
+        page_signals(doc, page_index).as_ref().map_or((0.0, false), |signals| {
+            (score_page(signals), drawn_prose_decides(signals))
+        })
     });
     let (page_confidence, drawn_prose): (Vec<f32>, Vec<bool>) = graded.into_iter().unzip();
 

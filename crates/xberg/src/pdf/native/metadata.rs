@@ -82,7 +82,12 @@ fn extract_pdf_specific_metadata(
 
     let producer = get_info_string(&mut doc.doc, "Producer");
 
-    let (scanned_confidence, scanned_pages, fabricated_text_pages, drawn_prose_pages) = ocr_routing_pages(
+    let OcrRoutingPages {
+        scanned_confidence,
+        scanned_pages,
+        fabricated_text_pages,
+        drawn_prose_pages,
+    } = ocr_routing_pages(
         &doc.doc,
         scanned_min_confidence,
         ocr_quality_thresholds,
@@ -111,6 +116,14 @@ fn extract_pdf_specific_metadata(
     Ok((metadata, drawn_prose_pages))
 }
 
+/// The page evidence the `Auto` OCR strategy reads: all four fields come from one detection pass.
+struct OcrRoutingPages {
+    scanned_confidence: Option<f32>,
+    scanned_pages: Option<Vec<u32>>,
+    fabricated_text_pages: Option<Vec<u32>>,
+    drawn_prose_pages: Vec<u32>,
+}
+
 /// Compute the raster scan-confidence/page-list pair and the separate fabricated-mapping
 /// page list that the `Auto` OCR strategy consults (issue #1667).
 ///
@@ -128,7 +141,7 @@ fn ocr_routing_pages(
     scanned_min_confidence: f64,
     ocr_quality_thresholds: &crate::core::config::OcrQualityThresholds,
     provenance_counts: Option<&[(usize, usize)]>,
-) -> (Option<f32>, Option<Vec<u32>>, Option<Vec<u32>>, Vec<u32>) {
+) -> OcrRoutingPages {
     // Advisory: a document we cannot grade reports no scan evidence. ~keep
     let detection = crate::pdf::scan_detect::detect(doc);
     let scanned_confidence = detection.as_ref().map(|d| d.confidence);
@@ -178,7 +191,12 @@ fn ocr_routing_pages(
         fabricated_text_pages = Some(one_indexed);
     }
 
-    (scanned_confidence, scanned_pages, fabricated_text_pages, drawn_prose_pages)
+    OcrRoutingPages {
+        scanned_confidence,
+        scanned_pages,
+        fabricated_text_pages,
+        drawn_prose_pages,
+    }
 }
 
 /// Extract common document metadata (title, author, keywords, dates, creator)
