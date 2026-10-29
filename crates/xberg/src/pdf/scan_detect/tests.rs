@@ -327,6 +327,51 @@ fn drawn_prose_rule_needs_all_of_its_conditions() {
     }
 }
 
+/// Text area: the stub cap itself is inside the rule, a hair above it is outside.
+#[test]
+fn drawn_prose_rule_holds_at_the_text_area_bound() {
+    let at_bound = PageScanSignals {
+        text_area_ratio: TEXT_AREA_STUB_MAX,
+        ..drawn_prose_with_stub_layer()
+    };
+    let over_bound = PageScanSignals {
+        text_area_ratio: TEXT_AREA_STUB_MAX + 0.001,
+        ..drawn_prose_with_stub_layer()
+    };
+    assert_score(score_page(&at_bound), 0.85);
+    assert_score(score_page(&over_bound), 0.0);
+}
+
+/// Glyph count: the scan's glyph cap itself is inside the rule, one glyph more is outside.
+#[test]
+fn drawn_prose_rule_holds_at_the_glyph_count_bound() {
+    let at_bound = PageScanSignals {
+        glyph_count: OCR_SCAN_MAX_GLYPHS,
+        ..drawn_prose_with_stub_layer()
+    };
+    let over_bound = PageScanSignals {
+        glyph_count: OCR_SCAN_MAX_GLYPHS + 1,
+        ..drawn_prose_with_stub_layer()
+    };
+    assert_score(score_page(&at_bound), 0.85);
+    assert_score(score_page(&over_bound), 0.0);
+}
+
+/// Path density: the drawn-page cutoff itself is inside the rule, a hair below it is outside.
+#[test]
+fn drawn_prose_rule_holds_at_the_path_density_bound() {
+    let at_bound = PageScanSignals {
+        vector_path_density: DRAWN_PAGE_PATH_DENSITY_MIN,
+        ..drawn_prose_with_stub_layer()
+    };
+    let under_bound = PageScanSignals {
+        vector_path_density: DRAWN_PAGE_PATH_DENSITY_MIN - 0.01,
+        ..drawn_prose_with_stub_layer()
+    };
+    assert_score(score_page(&at_bound), 0.85);
+    assert_score(score_page(&under_bound), 0.0);
+}
+
 /// A full-page raster keeps its score: the rule only widens the sub-full-page gate.
 #[test]
 fn drawn_prose_rule_does_not_change_a_full_page_raster() {
