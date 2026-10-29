@@ -164,6 +164,10 @@ description = "Run Rust E2E tests"
 env = { RUST_TEST_THREADS = "1" }
 run = "cargo test --locked --manifest-path e2e/rust/Cargo.toml --release"
 
+# The iOS half needs macOS; elsewhere it is skipped here, while rust:check:ios alone fails. ~keep
 ["rust:check:mobile"]
 description = "cargo check Android + iOS mobile targets"
-run = [{ task = "rust:check:android" }, { task = "rust:check:ios" }]
+run = [
+  { task = "rust:check:android" },
+  'if [ "$(uname -s)" = Darwin ]; then mise run rust:check:ios; else echo "rust:check:ios skipped: needs macOS"; fi',
+]
