@@ -63,3 +63,18 @@ fn should_put_the_layer_before_the_structured_page_and_shift_relationships() {
     assert_eq!(page.relationships[0].source, 1);
     assert!(matches!(page.relationships[0].target, RelationshipTarget::Index(2)));
 }
+
+/// The two existing text judgements (language plausibility and the recognition-noise ratio)
+/// both abstain on a one-line layer, so neither can tell invented words from a real title.
+/// The layer gate therefore cannot reuse them to reject a short invented layer. ~keep
+#[test]
+fn should_show_that_the_existing_judgements_abstain_on_a_one_line_layer() {
+    use super::plausibility::{PlausibilityVerdict, evaluate_text_plausibility};
+    use super::scoring::is_ocr_recognition_noise;
+
+    let thresholds = OcrQualityThresholds::default();
+    for line in ["Meeting Notes", "Qxzv Kjwq Zxcv Wqjx Vkzq Jqxz"] {
+        assert_eq!(evaluate_text_plausibility(line, &thresholds), PlausibilityVerdict::NotEvaluated);
+        assert!(!is_ocr_recognition_noise(line, &thresholds));
+    }
+}
