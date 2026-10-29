@@ -84,11 +84,11 @@ require_no_cli_build() {
 
 require_exact_harness_build() {
   local action="$1"
-  local expected="cargo build --locked --manifest-path tools/benchmark-harness/Cargo.toml --bin benchmark-harness \$BUILD_ARG"
-  local command_count
+  local expected="if ! cargo build --locked --manifest-path tools/benchmark-harness/Cargo.toml --bin benchmark-harness \$BUILD_ARG; then"
+  local commands
 
-  command_count="$(grep -Foc "$expected" <<<"$action" || true)"
-  if [[ "$command_count" -ne 2 ]]; then
+  commands="$(sed -E 's/^[[:space:]]*//' <<<"$action" | grep -E '^(if ! )?cargo build ' || true)"
+  if [[ "$commands" != "$expected" ]]; then
     echo "benchmark workflow validation failed: harness cache must build only the uploaded benchmark-harness binary"
     exit 1
   fi
