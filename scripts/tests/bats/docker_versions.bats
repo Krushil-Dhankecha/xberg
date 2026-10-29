@@ -1,4 +1,6 @@
 setup() {
+	bats_load_library xberg-bats
+	xberg_setup
 	REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd -P)"
 }
 
