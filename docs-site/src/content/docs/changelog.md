@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **(structured): Add caller-selected image size limits and option-aware render caching.** (#2319)
+  Resize images before PNG encoding while honoring the caller’s security budget.
 - **(benchmarks): Score layout detections against hash-bound COCO annotations.**
   With geometry annotations supplied, model comparisons report bounding-box precision, recall, F1 and COCO AP,
   retain annotation sources,
