@@ -128,9 +128,7 @@ impl ScanDetection {
             .map(|(index, _)| index)
             .collect()
     }
-}
 
-impl ScanDetection {
     /// Zero-based indices of pages that clear `min_confidence` only through the drawn-prose rule.
     /// A scan with a good invisible-text sidecar is not in this list: the default OCR route
     /// leaves it native. ~keep
