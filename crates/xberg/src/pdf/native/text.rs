@@ -605,17 +605,26 @@ fn group_spans_into_baseline_lines<'a>(
     let mut sorted: Vec<&xberg_native_pdf::layout::TextSpan> = spans.iter().collect();
     sorted.sort_by(|a, b| a.bbox.x.total_cmp(&b.bbox.x).then(b.bbox.y.total_cmp(&a.bbox.y)));
 
+    // Spans arrive in x order, so a track that ends further left than the widest
+    // allowed gap can never take this span or a later one. Keeping only the
+    // reachable tracks bounds the work per span by the number of lines, not by
+    // the number of spans already placed.
+    let widest_gap = LINE_MAX_GAP_EM * spans.iter().map(|span| span.font_size).fold(1.0_f32, f32::max);
     let mut tracks: Vec<LineTrack> = Vec::new();
+    let mut reachable: Vec<usize> = Vec::new();
     for span in sorted {
-        let best = tracks
+        reachable.retain(|&index| span.bbox.x - tracks[index].end_x <= widest_gap);
+        let best = reachable
             .iter()
-            .enumerate()
-            .filter_map(|(index, track)| track.fit(span).map(|error| (index, error)))
+            .filter_map(|&index| tracks[index].fit(span).map(|error| (index, error)))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(index, _)| index);
         match best {
             Some(index) => tracks[index].push(span),
-            None => tracks.push(LineTrack::new(span)),
+            None => {
+                reachable.push(tracks.len());
+                tracks.push(LineTrack::new(span));
+            }
         }
     }
 
