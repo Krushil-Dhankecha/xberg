@@ -377,14 +377,17 @@ pub struct InternalDocument {
     /// the public output.
     #[serde(skip)]
     #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-    pub(crate) ocr_pruned_words: OcrPrunedWords,
+    pub ocr_pruned_words: OcrPrunedWords,
 }
 
 /// Word counts of OCR lines removed from a page, in the terms of the page fragmentation check:
 /// whitespace tokens, tokens with a letter, and letter tokens of at most two bytes.
+// `pub` + alef(skip) for the same reason as `OcrPageCoordinateFrame`: the field is `pub` so
+// struct-update syntax works in the integration tests, and the type stays out of the bindings. ~keep
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+#[cfg_attr(alef, alef(skip))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct OcrPrunedWords {
+pub struct OcrPrunedWords {
     pub(crate) words: usize,
     pub(crate) scorable: usize,
     pub(crate) short: usize,
