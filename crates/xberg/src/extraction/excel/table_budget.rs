@@ -90,7 +90,7 @@ pub(super) fn validate_xlsx<R: Read + Seek>(workbook: &mut calamine::Xlsx<R>, li
         let mut nonempty_shared = ahash::AHashSet::new();
         let mut reader = match workbook.worksheet_cells_reader(&name) {
             Ok(reader) => reader,
-            Err(calamine::XlsxError::NotAWorksheet(_)) => continue,
+            Err(calamine::XlsxError::NotAWorksheet(_) | calamine::XlsxError::WorksheetNotFound(_)) => continue,
             Err(error) => {
                 return Err(XbergError::parsing(format!(
                     "Failed to read worksheet '{name}': {error}"
