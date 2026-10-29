@@ -504,6 +504,12 @@ fn is_fragmented_span_list(spans: &[xberg_native_pdf::layout::TextSpan]) -> bool
     false
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Counts `LineTrack::fit` calls so a test can bound the work of the line grouping.
+    static FIT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// One text line under construction: spans in x order that share a baseline.
 ///
 /// The baseline may tilt. The slope comes from a least-squares fit over the
@@ -589,6 +595,8 @@ impl<'a> LineTrack<'a> {
     /// after the line's end and sits within the baseline band, both scaled
     /// to the larger font. Returns the baseline error when it does.
     fn fit(&self, span: &xberg_native_pdf::layout::TextSpan) -> Option<f32> {
+        #[cfg(test)]
+        FIT_CALLS.with(|calls| calls.set(calls.get() + 1));
         let em = self.font_size.max(span.font_size).max(1.0);
         let error = (span.bbox.y - self.predicted_y(span.bbox.x)).abs();
         (span.bbox.x - self.end_x <= LINE_MAX_GAP_EM * em && error <= LINE_BASELINE_BAND_EM * em).then_some(error)
@@ -3151,6 +3159,108 @@ mod tests {
                 );
             }
             assert_eq!(lines.len(), 8, "tan {tan}: {text:?}");
+        }
+    }
+
+    /// The grouping before the baseline index: every span is compared with every
+    /// track that is still within reach in x. Kept as the oracle for the indexed version.
+    fn group_by_scanning_every_reachable_track(spans: &[TextSpan]) -> Vec<Vec<&TextSpan>> {
+        let mut sorted: Vec<&TextSpan> = spans.iter().collect();
+        sorted.sort_by(|a, b| a.bbox.x.total_cmp(&b.bbox.x).then(b.bbox.y.total_cmp(&a.bbox.y)));
+        let widest_gap = LINE_MAX_GAP_EM * spans.iter().map(|span| span.font_size).fold(1.0_f32, f32::max);
+        let mut tracks: Vec<LineTrack> = Vec::new();
+        let mut reachable: Vec<usize> = Vec::new();
+        for span in sorted {
+            reachable.retain(|&index| span.bbox.x - tracks[index].end_x <= widest_gap);
+            let best = reachable
+                .iter()
+                .filter_map(|&index| tracks[index].fit(span).map(|error| (index, error)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(index, _)| index);
+            match best {
+                Some(index) => tracks[index].push(span),
+                None => {
+                    reachable.push(tracks.len());
+                    tracks.push(LineTrack::new(span));
+                }
+            }
+        }
+        tracks.sort_by(|a, b| {
+            b.left_baseline()
+                .total_cmp(&a.left_baseline())
+                .then(a.min_x.total_cmp(&b.min_x))
+        });
+        tracks.into_iter().map(|track| track.spans).collect()
+    }
+
+    fn fit_calls_while<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        FIT_CALLS.with(|calls| calls.set(0));
+        let value = work();
+        (value, FIT_CALLS.with(|calls| calls.get()))
+    }
+
+    #[test]
+    fn many_spans_at_one_x_on_distinct_baselines_group_in_near_linear_work() {
+        // Every span starts at the same x, so the x-gap rule keeps every earlier track
+        // reachable. Comparing each span with all of them costs n*n/2 fits.
+        let count = 4000;
+        for pitch in [20.0_f32, 6.0] {
+            let spans: Vec<TextSpan> = (0..count)
+                .map(|row| span_with_width("ab", 100.0, 20_000.0 - row as f32 * pitch, 12.0, 10.0, 10.0))
+                .collect();
+            let (groups, fits) = fit_calls_while(|| group_spans_into_baseline_lines(&spans));
+            assert_eq!(groups.len(), count, "pitch {pitch}: every baseline is its own line");
+            assert!(
+                fits <= 16 * count,
+                "pitch {pitch}: {fits} fit calls for {count} spans on distinct baselines"
+            );
+        }
+    }
+
+    #[test]
+    fn many_columns_on_one_baseline_group_in_near_linear_work() {
+        // Every span sits on the same baseline but too far right to continue the
+        // previous one, so each starts a line. A track that ends out of reach must
+        // leave the set that the next span is compared with.
+        let count = 4000;
+        let spans: Vec<TextSpan> = (0..count)
+            .map(|column| span_with_width("ab", 20.0 + column as f32 * 200.0, 400.0, 12.0, 10.0, 10.0))
+            .collect();
+        let (groups, fits) = fit_calls_while(|| group_spans_into_baseline_lines(&spans));
+        assert_eq!(groups.len(), count, "every column is its own line");
+        assert!(
+            fits <= 16 * count,
+            "{fits} fit calls for {count} spans in separate columns"
+        );
+    }
+
+    #[test]
+    fn indexed_grouping_equals_the_scan_of_every_reachable_track() {
+        // A fixed pseudo-random page of short runs on tilted and level lines, with
+        // coinciding x values and near-equal baseline errors, so tie-breaks matter.
+        let mut state = 0x2545_f491_u32;
+        let mut next = move |modulus: u32| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) % modulus
+        };
+        for round in 0..40 {
+            let font_size = [4.0_f32, 7.0, 10.0, 12.0][round % 4];
+            let mut spans = Vec::new();
+            for _ in 0..(60 + next(120)) {
+                let x = next(40) as f32 * font_size;
+                let y = 300.0 + next(90) as f32 * font_size * 0.25 + next(2) as f32 * 0.5;
+                let width = (1 + next(6)) as f32 * font_size * 0.5;
+                spans.push(span_with_width("w", x, y, width, font_size, font_size));
+            }
+            let indexed = group_spans_into_baseline_lines(&spans);
+            let scanned = group_by_scanning_every_reachable_track(&spans);
+            let as_ids = |groups: &[Vec<&TextSpan>]| -> Vec<Vec<*const TextSpan>> {
+                groups
+                    .iter()
+                    .map(|group| group.iter().map(|span| *span as *const TextSpan).collect())
+                    .collect()
+            };
+            assert_eq!(as_ids(&indexed), as_ids(&scanned), "round {round}, font {font_size}");
         }
     }
 
