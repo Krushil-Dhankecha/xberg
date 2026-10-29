@@ -27,9 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **(tooling): Repository tasks run with `mise run <task>` instead of go-task.**
-  Task names are unchanged; `Taskfile.yml` and `.task/` are replaced by `mise.toml` and `mise-tasks/`.
-
 - **(Rust): Update Crawlberg configuration types and error matching.**
   Exhaustive Crawlberg configuration literals need the new upstream fields; use `..Default::default()` where appropriate.
   `WafBlocked` matches must account for its added status and body fields. HTML conversion options retain their existing
