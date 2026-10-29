@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 
 setup() {
+	[ -z "${XBERG_EXPECTED_BASH_MAJOR_MINOR:-}" ] || [[ "$BASH_VERSION" == "$XBERG_EXPECTED_BASH_MAJOR_MINOR".* ]]
 	bats_load_library xberg-bats
 	xberg_setup
 	REPOSITORY_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd -P)"

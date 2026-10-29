@@ -818,10 +818,18 @@ jobs:
           # dylib closure, reusing this restored file; on the other targets this
           # repack produces the final tarball (build-node-napi does not repack).
           git checkout HEAD -- crates/xberg-node/index.d.ts
+          notice_roots=()
+          for platform_dir in crates/xberg-node/npm/*/; do
+            ls "$platform_dir"*.node >/dev/null 2>&1 || continue
+            python3 scripts/ci/package-notices.py stage "$platform_dir"
+            notice_roots+=("npm/$(basename "$platform_dir")")
+          done
+          [ "${#notice_roots[@]}" -gt 0 ] || { echo "::error::no populated NAPI platform packages"; exit 1; }
           members=(npm)
           [ -f crates/xberg-node/index.js ] && members+=(index.js)
           [ -f crates/xberg-node/index.d.ts ] && members+=(index.d.ts)
           tar -czf "node-bindings-${{ matrix.target }}.tar.gz" -C crates/xberg-node "${members[@]}"
+          python3 scripts/ci/package-notices.py verify "node-bindings-${{ matrix.target }}.tar.gz" "${notice_roots[@]}"
 
       - name: Vendor macOS dylib closure (libheif + codecs) into the .node package
         if: contains(matrix.target, 'apple-darwin')
@@ -835,6 +843,7 @@ jobs:
           node_file="$(find crates/xberg-node/npm -maxdepth 2 -name '*.node' -type f | head -1)"
           [ -n "$node_file" ] || { echo "::error::no .node staged under crates/xberg-node/npm"; exit 1; }
           platform_dir="$(dirname "$node_file")"
+          python3 scripts/ci/package-notices.py stage "$platform_dir"
           bash scripts/ci/vendor-macos-node-dylibs.sh "$platform_dir"
           # Reconcile the platform package.json `files` with every binary now on
           # disk so npm pack ships the whole closure.
@@ -856,6 +865,7 @@ jobs:
           [ -f crates/xberg-node/index.js ] && members+=(index.js)
           [ -f crates/xberg-node/index.d.ts ] && members+=(index.d.ts)
           tar -czf "node-bindings-${{ matrix.target }}.tar.gz" -C crates/xberg-node "${members[@]}"
+          python3 scripts/ci/package-notices.py verify "node-bindings-${{ matrix.target }}.tar.gz" "npm/$(basename "$platform_dir")"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -917,6 +927,7 @@ jobs:
             echo "::error::no vendored shared libs produced by musl build for ${platform}"; exit 1
           fi
           cp "crates/xberg-node/npm/${platform}/package.json" "staging/npm/${platform}/package.json"
+          python3 scripts/ci/package-notices.py stage "staging/npm/${platform}"
           # Reconcile `files` with the binaries on disk — napi create-npm-dirs
           # regenerates the committed package.json to list only *.node, so the
           # vendored libs must be re-added here or npm publish drops them.
@@ -932,6 +943,7 @@ jobs:
           print("reconciled files:", pkg["files"])
           ' "staging/npm/${platform}"
           tar -czf node-bindings-${{ matrix.target }}.tar.gz -C staging npm
+          python3 scripts/ci/package-notices.py verify "node-bindings-${{ matrix.target }}.tar.gz" "npm/${platform}"
 
       # The steps above only prove a .node file (and its vendored shared-lib
       # closure) exist on disk -- never that require()ing it actually works.
@@ -1020,6 +1032,7 @@ jobs:
             echo "::error::no vendored shared libs produced by manylinux build for ${platform}"; exit 1
           fi
           cp "crates/xberg-node/npm/${platform}/package.json" "staging/npm/${platform}/package.json"
+          python3 scripts/ci/package-notices.py stage "staging/npm/${platform}"
           for notice in tesseract-5.5.4/LICENSE tesseract-5.5.4/AUTHORS leptonica-1.87.0/leptonica-license.txt; do
             test -s "build-output/licenses/xberg-system-ocr/$notice" || {
               echo "::error::Missing OCR notice: $notice" >&2; exit 1; }
@@ -1041,6 +1054,7 @@ jobs:
           print("reconciled files:", pkg["files"])
           ' "staging/npm/${platform}"
           tar -czf node-bindings-${{ matrix.target }}.tar.gz -C staging npm
+          python3 scripts/ci/package-notices.py verify "node-bindings-${{ matrix.target }}.tar.gz" "npm/${platform}"
       - name: Verify glibc floor
         run: bash scripts/ci/verify-glibc-floor.sh "staging/npm/linux-${{ matrix.napi_arch }}-gnu" "$GLIBC_FLOOR"
       - uses: actions/upload-artifact@v7
@@ -2056,12 +2070,7 @@ jobs:
             exit 1
           fi
           cp crates/xberg-ffi/include/xberg.h "$STAGE/include/"
-          # A published C FFI tarball missing its LICENSE is a distribution defect. ~keep
-          [ -f LICENSE ] || {
-            echo "::error::LICENSE is missing from the checkout — refusing to stage a C FFI tarball without it"
-            exit 1
-          }
-          cp LICENSE "$STAGE/"
+          python3 scripts/ci/package-notices.py stage "$STAGE"
           # Windows links ONNX Runtime dynamically (`Setup ONNX Runtime` above
           # runs with its default `system` strategy); this leg had no
           # equivalent of the glibc-Linux step below and shipped no ONNX
@@ -2073,6 +2082,7 @@ jobs:
           fi
           mkdir -p dist/c-ffi
           tar -czf "dist/c-ffi/${STAGE}.tar.gz" "$STAGE"
+          python3 scripts/ci/package-notices.py verify "dist/c-ffi/${STAGE}.tar.gz" "$STAGE"
 
       - name: Verify C FFI distribution has no DirectML import and ships ONNX Runtime (Windows)
         if: contains(matrix.target, '-pc-windows-msvc')
@@ -2090,6 +2100,8 @@ jobs:
           for t in dist/c-ffi/*.tar.gz; do
             shipped=1
             bash scripts/ci/vendor-native-closure.sh "$t"
+            notice_root="$(basename "$t" .tar.gz)"
+            python3 scripts/ci/package-notices.py verify "$t" "$notice_root"
             bash scripts/ci/verify-glibc-floor.sh "$t" "$GLIBC_FLOOR"
           done
           [ "$shipped" = 1 ] || echo "::notice::no artifact produced (dry-run stub); skipping ship+verify"
@@ -2619,8 +2631,10 @@ jobs:
           # would have failed to load had musl ever been added to `nif_targets`. ~keep
           RENAMED="libxberg_nif-v${NIF_VERSION}-nif-${NIF_API}-${TARGET}.so"
           cp build-output/libxberg_nif.so "staging/${RENAMED}"
+          python3 scripts/ci/package-notices.py stage staging
           TARBALL="${RENAMED}.tar.gz"
-          tar -czf "dist/elixir-natives/${TARBALL}" -C staging "${RENAMED}"
+          tar -czf "dist/elixir-natives/${TARBALL}" -C staging "${RENAMED}" LICENSE THIRD_PARTY_LICENSES.md
+          python3 scripts/ci/package-notices.py verify "dist/elixir-natives/${TARBALL}" .
           ( cd dist/elixir-natives && sha256sum "${TARBALL}" >"${TARBALL}.sha256" )
 
       - uses: actions/upload-artifact@v7
@@ -2709,6 +2723,7 @@ jobs:
           mkdir -p dist/elixir-natives staging
           RENAMED="libxberg_nif-v${NIF_VERSION}-nif-${NIF_API}-${TARGET}.so"
           cp build-output/libxberg_nif.so "staging/${RENAMED}"
+          python3 scripts/ci/package-notices.py stage staging
           for notice in tesseract-5.5.4/LICENSE tesseract-5.5.4/AUTHORS leptonica-1.87.0/leptonica-license.txt; do
             test -s "build-output/licenses/xberg-system-ocr/$notice" || {
               echo "::error::Missing OCR notice: $notice" >&2; exit 1; }
@@ -2724,6 +2739,7 @@ jobs:
           [ "$vendored" -gt 0 ] || { echo "::error::no vendored libraries in build-output" >&2; exit 1; }
           TARBALL="${RENAMED}.tar.gz"
           tar -czf "dist/elixir-natives/${TARBALL}" -C staging .
+          python3 scripts/ci/package-notices.py verify "dist/elixir-natives/${TARBALL}" .
           ( cd dist/elixir-natives && sha256sum "${TARBALL}" >"${TARBALL}.sha256" )
 
       # Verify only -- do NOT re-run vendor-native-closure.sh here. The closure was
@@ -2839,6 +2855,7 @@ jobs:
           STAGE=dist/server-natives
           mkdir -p "$STAGE"
           cp "target/${TARGET}/release/${LIB}" "$STAGE/${LIB}"
+          python3 scripts/ci/package-notices.py stage "$STAGE"
           # The Dart native dynamically links ONNX Runtime; the download-based
           # pub package ships only these staged files, so the ORT runtime must be
           # bundled beside the native or `RustLib.init()` fails to dlopen it.
@@ -2924,7 +2941,9 @@ jobs:
             # resolves ORT via @loader_path (macOS) / $ORIGIN (Linux) / the load
             # directory (Windows).
             tarball="xberg-dart-v${VERSION}-${blob}.tar.gz"
+            python3 scripts/ci/package-notices.py stage "$dir"
             tar -czf "dist/dart-release/${tarball}" -C "$dir" .
+            python3 scripts/ci/package-notices.py verify "dist/dart-release/${tarball}" .
             ( cd dist/dart-release && sha256sum "${tarball}" >"${tarball}.sha256" )
           done
 
@@ -4053,7 +4072,17 @@ jobs:
           cd crates/xberg-node/npm
           for dir in */; do
             if [ -f "$dir/package.json" ] && ls "$dir"*.node >/dev/null 2>&1; then
-              (cd "$dir" && npm pack && mv ./*.tgz ..)
+              python3 "$GITHUB_WORKSPACE/scripts/ci/package-notices.py" stage "$dir"
+              (
+                cd "$dir"
+                npm pack
+                packed=(./*.tgz)
+                [ "${#packed[@]}" -eq 1 ] && [ -f "${packed[0]}" ] || {
+                  echo "::error::expected one packed npm platform archive"; exit 1;
+                }
+                python3 "$GITHUB_WORKSPACE/scripts/ci/package-notices.py" verify "${packed[0]}" package
+                mv "${packed[0]}" ..
+              )
             fi
           done
           cd ../../..
