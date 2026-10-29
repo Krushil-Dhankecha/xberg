@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "vendored/**"
       - "integrations/**"
       - "crates/xberg/**"
       - "crates/xberg-native-pdf/**"
