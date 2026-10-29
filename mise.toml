@@ -132,12 +132,6 @@ run = [{ task = "rust:test:ci" }, "alef test --coverage"]
 description = "Lint all code via poly"
 run = "poly lint ."
 
-# `poly lint` never writes -- there is no autofix mode to opt out of, so this is a plain alias of
-# `lint`, not a stricter check-only variant. ~keep
-[tasks."lint:check"]
-description = "Lint all code via poly (alias of lint; poly lint never auto-fixes)"
-run = "poly lint ."
-
 [tasks.format]
 description = "Format all code via poly"
 run = "poly fmt --fix ."
@@ -148,7 +142,7 @@ run = "poly fmt --check ."
 
 [tasks.check]
 description = "Run all checks (format + lint, no modifications)"
-run = [{ task = "format:check" }, { task = "lint:check" }]
+run = [{ task = "format:check" }, { task = "lint" }]
 
 [tasks.update]
 description = "Update all dependencies within major versions (minor patches only)"
