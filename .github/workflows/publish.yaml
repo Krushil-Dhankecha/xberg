@@ -3014,7 +3014,7 @@ jobs:
           cargo-zigbuild-revision: "89c352ae6ff0bbafe17788da327764d9ef92240b"
           macos-dynamic-lookup: "false"
 
-      - uses: xberg-io/actions/build-swift-artifactbundle@v1
+      - uses: xberg-io/actions/build-swift-artifactbundle@624902e41e000f252cc3811b9b357f5cc5a7d0a8
         id: libs
         # Must equal the `.iOS(.vN)` floor in Package.swift. Unset, rustc links at its iOS default
         # (10.0) while cc/cmake compile for the runner SDK (18.5), and prebuilt ORT objects call
@@ -3061,7 +3061,7 @@ jobs:
           merge-multiple: true
           path: swift-libs
 
-      - uses: xberg-io/actions/build-swift-artifactbundle@v1
+      - uses: xberg-io/actions/build-swift-artifactbundle@624902e41e000f252cc3811b9b357f5cc5a7d0a8
         id: bundle
         with:
           crate-name: xberg-swift
@@ -3073,6 +3073,9 @@ jobs:
           include-macos-x86_64: "false"
           include-ios-x86_64: "false"
           prebuilt-libs-dir: swift-libs
+          additional-license-files: |
+            LICENSE
+            THIRD_PARTY_LICENSES.md
 
       - uses: actions/upload-artifact@v7
         with:
