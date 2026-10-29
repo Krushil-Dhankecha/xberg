@@ -94,3 +94,118 @@ run_validation() {
 	xberg_assert_status 1
 	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
 }
+
+@test "benchmark workflow guard should reject an extra inline composite action build step" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject an environment-prefixed inline build step" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: CARGO_BUILD_JOBS=2 cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject an environment-prefixed block build step" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: |
+        CARGO_BUILD_JOBS=2 cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should ignore Cargo command text printed by another action step" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Log build example
+      shell: bash
+      run: echo "cargo build --release -p unrelated"
+STEP
+	run_validation
+	xberg_assert_status 0
+	xberg_assert_output 'benchmark workflow build configuration is valid'
+}
+
+@test "benchmark workflow guard should reject a build launched through env" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: env CARGO_BUILD_JOBS=2 cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject an actual build after a shell command boundary" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: echo ready && cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject a quoted inline YAML build command" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: "cargo build --release -p unrelated" # real inline command
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject a continued block build command" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: |
+        cargo \
+          build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject a folded YAML build command" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: >
+        cargo
+        build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should ignore separately logged Cargo command words" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Log build example
+      shell: bash
+      run: echo cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 0
+	xberg_assert_output 'benchmark workflow build configuration is valid'
+}
