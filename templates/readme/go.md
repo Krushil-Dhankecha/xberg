@@ -302,9 +302,9 @@ func init() {
 
 ## Testing / Tooling
 
-- `task go:lint` – runs `gofmt` and `golangci-lint` (`golangci-lint` pinned to v2.11.3).
-- `task go:test` – executes `go test ./...` (after building the static FFI library).
-- `task e2e:go:verify` – regenerates fixtures via the e2e generator and runs `go test ./...` inside `e2e/go`.
+- `mise run go:lint` – runs `gofmt` and `golangci-lint` (`golangci-lint` pinned to v2.11.3).
+- `mise run go:test` – executes `go test ./...` (after building the static FFI library).
+- `mise run e2e:go:verify` – regenerates fixtures via the e2e generator and runs `go test ./...` inside `e2e/go`.
 
 Need help? Join the [Discord](https://discord.gg/xt9WY3GnKR) or open an issue with logs, platform info, and the steps you tried.
 

@@ -4,7 +4,7 @@
 version = 1
 ai_rulez_version = '5.9.2'
 scope = 'all'
-tree = 'sha256:ba5ea69a2c617c5e6abe20e0d69be7acf8ecc2a5a38356646761975f1bb1b7ac'
+tree = 'sha256:a2c0a3572357720745c12355e9bb13d765c6cd007805c2b32e4ff2646e5dd913'
 
 [[include]]
 name = 'xberg-bindings'
@@ -101,7 +101,7 @@ digest = 'sha256:eb41348cdeb82cef385f3230b33bb436011ef32813fd0876ea80c5e7c0449dc
 name = 'alef-generated-bindings'
 source = '.ai-rulez/skills/alef-generated-bindings/SKILL.md'
 commit = ''
-digest = 'sha256:ff043c315c8fc2201194a9739ad7b7eec4bfe3be5020f74ebfa30363620d24ac'
+digest = 'sha256:efe3ccc6c67c58f967981ae32f3d308af02f241bdea02c1365b984750d476aef'
 
 [[served]]
 name = 'api-server-mcp'
@@ -167,7 +167,7 @@ digest = 'sha256:d1a591a6f2e46cb431aa80dcd1e976110502132ca23dd2eb02c49b164c49dae
 name = 'crate-structure'
 source = '.ai-rulez/skills/crate-structure/SKILL.md'
 commit = ''
-digest = 'sha256:4801c8b5a0ce7b779e2b343996a43b5c6df91aea451de02f8fa1f2811b8d979a'
+digest = 'sha256:33fcce19d67de74f301790647960f04ee543273742d6e92fcfcca6237c10d3d1'
 
 [[served]]
 name = 'dependency-awareness'
@@ -209,7 +209,7 @@ digest = 'sha256:9f6c621b3902d72bcf84b61715a78266c07ba243fd6ed0b84af8e5787240ba5
 name = 'feature-flag-conventions'
 source = '.ai-rulez/skills/feature-flag-conventions/SKILL.md'
 commit = ''
-digest = 'sha256:52dfd14d398deb8fb3ed4f50907956407622fe54751fb3f3adb89f2c3e36acf6'
+digest = 'sha256:5b33f1828bcd9b77d4281cce677e17cb4d197a388c6a923dcb36e6fb7b57497c'
 
 [[served]]
 name = 'ffi-and-language-interop'
@@ -503,7 +503,7 @@ digest = 'sha256:8651ec0982657585e697dd493effee488ec008a92362636b2262db859ab30af
 name = 'test-corpus'
 source = '.ai-rulez/skills/test-corpus/SKILL.md'
 commit = ''
-digest = 'sha256:20689ad185e59b91b63cbb3b7d7e89df3faf0d08ae23900a5409f4798b38b031'
+digest = 'sha256:bc63fc75eaae3019ca2023d786d014df2ddffd4c8f9eedb557d091c26ccc4b92'
 
 [[served]]
 name = 'testing-conventions'
@@ -581,7 +581,7 @@ digest = 'sha256:0896c1846cbb1bd1a21124b16cdca904641d2c0713da62d8045b10483b19a8c
 name = 'xberg-release'
 source = '.ai-rulez/skills/xberg-release/SKILL.md'
 commit = ''
-digest = 'sha256:9220a77ef8c79325894ff06565684a5e0427f2711f36d4fa9c3219806380b775'
+digest = 'sha256:84b618cffee6a583b1c14c5f76db40063828b815f5a35f619b30a6a9efe1aa37'
 
 [[served]]
 name = 'xberg-typescript-toolchain'
@@ -593,7 +593,7 @@ digest = 'sha256:4e30d69826763acf17f3e286253fc398a4f60febb879c88f6e9ca5fdc2dc829
 kind = 'context'
 id = 'area-map'
 path = 'context/area-map.md'
-digest = 'sha256:57fe5f9b3c9a2dea6604c2e2c82af6d3ed95b72c043d8a5d9f5db57ef849f791'
+digest = 'sha256:9acb592c3fc3c5113465e1716b16c6fe2d4b788324a8a440cd1022a7f585232b'
 
 [[item]]
 kind = 'rule'
@@ -611,7 +611,7 @@ digest = 'sha256:9155454ccdec5bfa144caefaa9218d5be80b4462feb2216696d9d2d2e41754f
 kind = 'rule'
 id = 'changelog-policy'
 path = 'rules/changelog-policy.md'
-digest = 'sha256:32d11c388e79b63c6cee096881b8c8badf8deae326cea9ed269dcb02da5da7cd'
+digest = 'sha256:8b07b7721b09bfa2d2891aeb0506ebe4ecdcc97870b7146d5287afa587b48d2b'
 
 [[item]]
 kind = 'rule'
@@ -635,7 +635,7 @@ digest = 'sha256:c6a4f761a5e008b5003bce71fbebece0db305be0eb54ca3a12e45852663614a
 kind = 'rule'
 id = 'plugin-bundles'
 path = 'rules/plugin-bundles.md'
-digest = 'sha256:fd73a24f4325149ce0fe30cf4ff7d2c5a581e9c21baa54bff3306ee46983820a'
+digest = 'sha256:80881a32f6a1f68121f6121f615be461a68ae00113b675c41e1a4b6297c46984'
 
 [[item]]
 kind = 'settings'
@@ -646,7 +646,7 @@ digest = 'sha256:0c3ec1142275bddbddcc03caadc03358528d1b6a97aca401bc75e4471ba346c
 kind = 'skill'
 id = 'alef-generated-bindings'
 path = 'skills/alef-generated-bindings'
-digest = 'sha256:557448b04f72e43d1929409c15dbefb76493489d03bd18bc88b57ab3a45d29f6'
+digest = 'sha256:2b149af358cc1b6f449f2e6a554bc1eb81a82d14af7d98cd858b54bc9ce58c72'
 
 [[item]]
 kind = 'skill'
@@ -676,7 +676,7 @@ digest = 'sha256:17ab852ab7105299518b0d843f1ccfbd4aabe1b2256ad5c9a2fd4c5c79146e7
 kind = 'skill'
 id = 'crate-structure'
 path = 'skills/crate-structure'
-digest = 'sha256:7527a1c759dbd3642bccf3f4f38bfa86b5a7bfaa869e9b5d6b86d6e6729a60ec'
+digest = 'sha256:27b7b39a7a1b0287fd2e196e5c554dbc2342fd4828a4f55c0c23bdecbd548e42'
 
 [[item]]
 kind = 'skill'
@@ -694,7 +694,7 @@ digest = 'sha256:c8ce616291dece11ccc93b5e2ffb4e71c113a012cb8a27a9b0841730f17bbf1
 kind = 'skill'
 id = 'feature-flag-conventions'
 path = 'skills/feature-flag-conventions'
-digest = 'sha256:1b07d5c40ba4d0222983e517ffd4fa4cc24271ee3095aa8b5ffbb5a7ac1b7c45'
+digest = 'sha256:e3e3753f59df44aefc719a4157ce61c57f29d574446d617b1320111ed530c3a6'
 
 [[item]]
 kind = 'skill'
@@ -736,7 +736,7 @@ digest = 'sha256:4996f21914dffcae1cc33eb311046ef036117ca2d5a6fedbd75f0f634e41bf8
 kind = 'skill'
 id = 'test-corpus'
 path = 'skills/test-corpus'
-digest = 'sha256:ebc8f80c76f458b72f13dffd89bf1ca89d26110357c14b2e3779f909708350fb'
+digest = 'sha256:07ff7709d48da9473ade0ff3340e24270355d25abed6206e99065380b8bb22d6'
 
 [[item]]
 kind = 'skill'
@@ -748,7 +748,7 @@ digest = 'sha256:a4f37f9d03e9dfb803bf7fb3b0b94d24d2a42b64049f9e1f52b0261f0c4b8f5
 kind = 'skill'
 id = 'xberg-release'
 path = 'skills/xberg-release'
-digest = 'sha256:bce4d11f3661bd46f3eb69687a344f2e037a6e0550cc6f410723bc722763f7c3'
+digest = 'sha256:8f6759bd6d045385a5d4c6f9eb6e4b17b36ce141ea3c535012f7d3c0fd0235a7'
 
 [[item]]
 kind = 'skill'
