@@ -9,6 +9,8 @@
 # Allow only what Docker builds need
 !Cargo.toml
 !Cargo.lock
+!LICENSE
+!THIRD_PARTY_LICENSES.md
 !vendored/
 !vendored/sysinfo/
 !crates/xberg/
