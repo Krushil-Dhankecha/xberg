@@ -47,20 +47,21 @@ bench_fixtures = "tools/benchmark-harness/fixtures"
 
 [tasks."governance:hooks:install"]
 description = "Provision machine preferences and install reviewed AI governance hooks"
-file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/governance/hooks-install.sh"
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.1/tasks/governance/hooks-install.sh"
 
 [tasks."version:show"]
 description = "Show current version from Cargo.toml"
-file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/version/cargo.sh"
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.1/tasks/version/cargo.sh"
 
-# The ecosystems whose xberg bodies match the shared engine. rust, python, node, ruby and java
+# The ecosystems whose xberg bodies match the shared engine. rust, python, node, ruby, java and zig
 # carry repository specifics (extra locks, the parking_lot hold, the frozen bundle, mvn without a
-# wrapper) and run through mise-tasks/deps/local.sh instead. ~keep
+# wrapper, a build.zig.zon with no URL to refresh) and run through mise-tasks/deps/local.sh
+# instead. ~keep
 [tasks.deps]
 description = "Update or upgrade one ecosystem's dependencies, or every ecosystem"
 hide = true
-file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/deps/refresh.sh"
-env.DEPS_LANGS = "php go csharp elixir dart swift kotlin-android zig"
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.1/tasks/deps/refresh.sh"
+env.DEPS_LANGS = "php go csharp elixir dart swift kotlin-android"
 env.DEPS_PHP_DIR = "."
 env.DEPS_CSHARP_DIR = "packages/csharp/Xberg"
 
@@ -188,14 +189,14 @@ run = [{ task = "rust:check:mobile" }]
 
 [tasks.update]
 description = "Update all dependencies within major versions (minor patches only)"
-run = [{ task = "deps:local update" }, { task = "deps update" }, { task = "integrations:update" }, "alef update"]
+run = [{ task = "deps:local update" }, "mise run deps update", { task = "integrations:update" }, "alef update"]
 
 [tasks.upgrade]
 description = "Upgrade all dependencies to latest including breaking changes"
 run = [
   "rustup update stable",
   { task = "deps:local upgrade" },
-  { task = "deps upgrade" },
+  "mise run deps upgrade",
   { task = "integrations:upgrade" },
   "alef update --latest || true",
   "gau --update .",

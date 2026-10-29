@@ -2,7 +2,7 @@
 #MISE description="Update or upgrade the dependencies of the ecosystems with xberg-specific steps"
 #MISE hide=true
 #USAGE arg "<mode>" help="update stays within major versions; upgrade takes the latest, breaking ones included"
-#USAGE arg "[lang]" default="all" help="rust, python, node, ruby or java; all refreshes every one"
+#USAGE arg "[lang]" default="all" help="rust, python, node, ruby, java or zig; all refreshes every one"
 # shellcheck disable=SC2154 # usage_* are set by mise from the #USAGE lines
 set -euo pipefail
 
@@ -93,13 +93,29 @@ refresh_java() {
     echo "Maven not found, skipping Java upgrade")
 }
 
+# packages/zig pins no URL today, and the shared engine fails on a build.zig.zon without one, so
+# an empty set is reported rather than treated as an error. ~keep
+refresh_zig() {
+  local urls url
+  urls="$(grep '\.url' packages/zig/build.zig.zon 2>/dev/null | cut -d '=' -f 2 | cut -d '#' -f 1 | tr -d '", ' || true)"
+  if [ -z "$urls" ]; then
+    echo "No external Zig dependencies in build.zig.zon — nothing to $mode"
+    return
+  fi
+  for url in $urls; do
+    echo "Updating module $url"
+    (cd packages/zig && zig fetch --save "$url")
+    echo
+  done
+}
+
 case "$usage_lang" in
 all)
-  for lang in rust python node ruby java; do
+  for lang in rust python node ruby java zig; do
     "refresh_$lang"
   done
   ;;
-rust | python | node | ruby | java) "refresh_$usage_lang" ;;
+rust | python | node | ruby | java | zig) "refresh_$usage_lang" ;;
 *)
   echo "unknown ecosystem: $usage_lang" >&2
   exit 2

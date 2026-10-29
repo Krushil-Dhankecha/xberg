@@ -37,68 +37,68 @@ run = [{ task = "deps:local", args = ["upgrade", "java"] }]
 
 ["php:update"]
 description = "Update PHP dependencies within major versions (composer update --with-dependencies)"
-run = [{ task = "deps", args = ["update", "php"] }]
+run = ["mise run deps update php"]
 
 ["php:upgrade"]
 description = "Upgrade PHP dependencies to latest including breaking changes (composer update --with-all-dependencies)"
-run = [{ task = "deps", args = ["upgrade", "php"] }]
+run = ["mise run deps upgrade php"]
 
 ["go:update"]
 description = "Update Go dependencies within major versions (go get -u=patch + go mod tidy)"
-run = [{ task = "deps", args = ["update", "go"] }]
+run = ["mise run deps update go"]
 
 ["go:upgrade"]
 description = "Upgrade Go dependencies to latest including breaking changes (go get -u + go mod tidy)"
-run = [{ task = "deps", args = ["upgrade", "go"] }]
+run = ["mise run deps upgrade go"]
 
 ["csharp:update"]
 description = "Update C# dependencies within major versions (dotnet outdated -u --version-lock Minor)"
-run = [{ task = "deps", args = ["update", "csharp"] }]
+run = ["mise run deps update csharp"]
 
 ["csharp:upgrade"]
 description = "Upgrade C# dependencies to latest including breaking changes (dotnet outdated -u)"
-run = [{ task = "deps", args = ["upgrade", "csharp"] }]
+run = ["mise run deps upgrade csharp"]
 
 ["elixir:update"]
 description = "Update Elixir dependencies within major versions (mix deps.update --all)"
-run = [{ task = "deps", args = ["update", "elixir"] }]
+run = ["mise run deps update elixir"]
 
 ["elixir:upgrade"]
 description = "Upgrade Elixir dependencies to latest including breaking changes (mix hex.outdated --all + mix deps.update)"
-run = [{ task = "deps", args = ["upgrade", "elixir"] }]
+run = ["mise run deps upgrade elixir"]
 
 ["dart:update"]
 description = "Update Dart dependencies within major versions (dart pub upgrade)"
-run = [{ task = "deps", args = ["update", "dart"] }]
+run = ["mise run deps update dart"]
 
 ["dart:upgrade"]
 description = "Upgrade Dart dependencies to latest including breaking changes (dart pub upgrade --major-versions)"
-run = [{ task = "deps", args = ["upgrade", "dart"] }]
+run = ["mise run deps upgrade dart"]
 
 ["swift:update"]
 description = "Update Swift dependencies (swift package update)"
-run = [{ task = "deps", args = ["update", "swift"] }]
+run = ["mise run deps update swift"]
 
 ["swift:upgrade"]
 description = "Upgrade Swift dependencies (swift package update)"
-run = [{ task = "deps", args = ["upgrade", "swift"] }]
+run = ["mise run deps upgrade swift"]
 
 # kotlin-android has no managed lockfile; its versions are pinned by alef regeneration. ~keep
 ["kotlin-android:update"]
 description = "Update Kotlin/Android dependencies (no-op — versions pinned by alef regen)"
-run = [{ task = "deps", args = ["update", "kotlin-android"] }]
+run = ["mise run deps update kotlin-android"]
 
 ["kotlin-android:upgrade"]
 description = "Upgrade Kotlin/Android dependencies (no-op — versions pinned by alef regen)"
-run = [{ task = "deps", args = ["upgrade", "kotlin-android"] }]
+run = ["mise run deps upgrade kotlin-android"]
 
 ["zig:update"]
 description = "Update Zig dependencies (re-fetch each URL pinned in build.zig.zon)"
-run = [{ task = "deps", args = ["update", "zig"] }]
+run = [{ task = "deps:local", args = ["update", "zig"] }]
 
 ["zig:upgrade"]
 description = "Upgrade Zig dependencies (zig fetch --save for each .url in build.zig.zon)"
-run = [{ task = "deps", args = ["upgrade", "zig"] }]
+run = [{ task = "deps:local", args = ["upgrade", "zig"] }]
 
 # ---- Python ------------------------------------------------------------------------------------
 
