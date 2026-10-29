@@ -319,7 +319,11 @@ fn drawn_prose_rule_needs_all_of_its_conditions() {
         ("long text layer", long_text),
         ("small picture area", small_picture),
     ] {
-        assert!(score_page(&signals) == 0.0, "{name} must score zero, got {}", score_page(&signals));
+        assert!(
+            score_page(&signals) == 0.0,
+            "{name} must score zero, got {}",
+            score_page(&signals)
+        );
     }
 }
 
@@ -423,6 +427,7 @@ fn scores_over_codec_and_producer(
                     glyph_count,
                     text_area_ratio,
                     codec,
+                    vector_path_density: 0.0,
                     producer_prior,
                 })
             })
@@ -514,7 +519,6 @@ fn a_score_of_0_65_requires_bilevel_codec_and_scanner_producer_and_non_header_si
     );
     assert_score(
         score_page(&PageScanSignals {
-            vector_path_density: 0.0,
             producer_prior: ProducerPrior::Authoring,
             ..all_three
         }),

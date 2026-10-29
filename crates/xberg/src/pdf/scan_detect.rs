@@ -165,8 +165,7 @@ pub(crate) fn score_page(signals: &PageScanSignals) -> f32 {
     let full_page = signals.image_coverage >= IMAGE_COVERAGE_FULL;
     // A stub layer over a drawn page counts as header-sized only below full-page coverage:
     // a full-page raster keeps its score (GH#2313). ~keep
-    let header_sized_text =
-        is_header_sized_text(signals) || (!full_page && is_stub_layer_over_drawn_page(signals));
+    let header_sized_text = is_header_sized_text(signals) || (!full_page && is_stub_layer_over_drawn_page(signals));
 
     // Below full-page coverage, only a page whose native text is header-sized can be a
     // (partial-coverage) scan at all -- GH#1793. A page with substantial native text next to
