@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **(benchmarks): Score layout detections against hash-bound COCO annotations.**
+  With geometry annotations supplied, model comparisons report bounding-box precision, recall, F1 and COCO AP,
+  retain annotation sources,
+  and reject altered saved results. (#2284)
+
 - **(layout): Select PDF pages with `extract_with_layout_pages`.**
   The additive API uses 1-based page numbers, retains native text on excluded pages and warns about invalid pages. (#2255)
 
@@ -26,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **(llm): Rust exposes failed structured-response usage through `xberg::llm::usage::usage_from_error`.** (#2139)
 
 ### Changed
+
+- **(development): Run the complete benchmark harness with `mise run benchmark:test`.**
+  Resource-monitor checks validate recorded timestamps without relying on operating-system sleep precision.
+- **(validation): Keep Markdown and request-policy regression checks compatible with upstream metadata.**
+  YAML front matter and Crawlberg field declaration order no longer cause unrelated check failures.
 
 - **(Rust): Update Crawlberg configuration types and error matching.**
   Exhaustive Crawlberg configuration literals need the new upstream fields; use `..Default::default()` where appropriate.
@@ -44,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows builds verified Tesseract source; Linux and macOS provisioning checks selected runtimes and real decoding.
 
 ### Security
+
+- **(build): Update the zlib build dependency to 1.1.31 for RUSTSEC-2026-0418.**
 
 - **(rendering): Avoid quadratic work when rendering user-controlled HTML table cells.**
   Comrak 0.59 includes the upstream table-cell rendering fix.
@@ -88,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Archive count, size, and compression-ratio limits are checked before header validation or payload reads.
 
 ### Fixed
+
+- **(excel): Retain missing-worksheet warnings alongside readable sheet content after dependency updates.**
+- **(djot): Keep nested table captions inside footnotes without duplicating them.**
+- **(build): Retry Windows tool installation until the requested versions are verified.**
+- **(development): Restore integration build tasks after the Mise migration.**
+  Python and Node integrations and local Node and Java bindings have their build tasks again.
+- **(packaging): Include canonical licensing notices in Docker images and custom native release archives.**
+  Dart and Swift packaging checks use the checked-out release inputs.
 
 - **(mobile): Restore default Dart and Swift builds for iOS devices and simulators.**
 - **(doc): Retain inherited superscript and subscript character styles while honoring direct formatting.** (#2275)
