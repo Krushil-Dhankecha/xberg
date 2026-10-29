@@ -2912,6 +2912,13 @@ jobs:
       ${{ !inputs.plugins-only && (needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.release_dart == 'true' && needs.dart-server-natives.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+
       - uses: actions/create-github-app-token@v3
         id: app-token
         with:

@@ -216,3 +216,57 @@ SHELL
 	xberg_assert_status 1
 	xberg_assert_output_contains 'expected one xberg-ffi-fixture/THIRD_PARTY_LICENSES.md, found 0'
 }
+
+check_dart_release_prerequisites() {
+	run python3 - "${1:-$REPOSITORY_ROOT/.github/workflows/publish.yaml}" <<'PYTHON'
+import re, sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text()
+
+def job(name):
+    matches = re.findall(rf"^  {name}:\n(.*?)(?=^  [a-z][a-z0-9-]+:|\Z)", source, re.M | re.S)
+    assert len(matches) == 1, f"expected one {name} job, found {len(matches)}"
+    return matches[0]
+
+upload = job("upload-dart-release")
+steps = re.findall(r"^      - .*?(?=^      - |\Z)", upload, re.M | re.S)
+checkouts = [(index, step) for index, step in enumerate(steps) if "uses: actions/checkout@" in step]
+assert len(checkouts) == 1, f"Dart upload needs one source checkout, found {len(checkouts)}"
+packaging = [index for index, step in enumerate(steps) if "name: Package server natives as tarballs" in step]
+assert len(packaging) == 1, f"expected one Dart archive packaging step, found {len(packaging)}"
+index, checkout = checkouts[0]
+assert index < packaging[0], "Dart source checkout must precede packaging"
+producer = job("dart-server-natives")
+pin = re.findall(r"uses: (actions/checkout@\S+)", producer)
+assert len(pin) == 1 and f"uses: {pin[0]}" in checkout, "Dart checkout must match its producer's action pin"
+for setting in ("ref: ${{ needs.prepare.outputs.checkout_ref }}", "fetch-depth: 0", "submodules: false", "persist-credentials: false"):
+    assert setting in checkout, f"Dart source checkout missing {setting}"
+for excluded in ("if:", "path:", "sparse-checkout:"):
+    assert not re.search(rf"^\s+{excluded}", checkout, re.M), f"Dart checkout must provide unconditional root source: {excluded}"
+assert "python3 scripts/ci/package-notices.py stage" in steps[packaging[0]], "Dart packaging helper was not examined"
+print("Verified 1 Dart release source checkout before 1 archive packaging step")
+PYTHON
+}
+
+@test "Dart upload job should check out its prepared release source before using canonical notices" {
+	check_dart_release_prerequisites
+	xberg_assert_status 0
+	xberg_assert_output_contains 'Verified 1 Dart release source checkout before 1 archive packaging step'
+}
+
+@test "Dart prerequisite guard should reject removing its source checkout on a fresh runner" {
+	python3 - "$REPOSITORY_ROOT/.github/workflows/publish.yaml" "$XBERG_WORK/no-checkout.yaml" <<'PYTHON'
+import re, sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+start = source.index("  upload-dart-release:\n")
+end = source.index("\n  swift-target:", start)
+job = source[start:end]
+job = re.sub(r"^      - uses: actions/checkout@.*?(?=^      - |\Z)", "", job, flags=re.M | re.S)
+Path(sys.argv[2]).write_text(source[:start] + job + source[end:])
+PYTHON
+	check_dart_release_prerequisites "$XBERG_WORK/no-checkout.yaml"
+	xberg_assert_status 1
+	xberg_assert_output_contains 'Dart upload needs one source checkout, found 0'
+}
