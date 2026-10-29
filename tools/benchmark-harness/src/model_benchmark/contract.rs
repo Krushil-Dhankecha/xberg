@@ -7,6 +7,7 @@ use super::{Detector, ModelBenchmarkConfig};
 use crate::{Error, Result};
 
 const REPORT_SCHEMA_VERSION: u32 = 2;
+pub(super) const SCORED_REPORT_SCHEMA_VERSION: u32 = 3;
 const MODEL_ARMS: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +140,8 @@ pub struct ModelBenchmarkReport {
     pub rows: Vec<DetectorPageRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<super::PairedProcessResources>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<super::GeometryEvidence>,
 }
 
 impl ModelBenchmarkReport {
@@ -173,6 +176,7 @@ impl ModelBenchmarkReport {
             models,
             rows,
             resources: None,
+            geometry: None,
         })
     }
 
@@ -212,11 +216,18 @@ impl ModelBenchmarkReport {
                 self.expected_inference_calls
             )));
         }
+        if let Some(geometry) = &self.geometry {
+            geometry.validate(self)?;
+        }
         Ok(())
     }
 
     fn validate_header(&self) -> Result<()> {
-        if self.schema_version != REPORT_SCHEMA_VERSION || self.quality_assessed || self.apply_heuristics {
+        let supported = matches!(
+            (self.schema_version, self.quality_assessed, self.geometry.is_some()),
+            (REPORT_SCHEMA_VERSION, false, false) | (SCORED_REPORT_SCHEMA_VERSION, true, true)
+        );
+        if !supported || self.apply_heuristics {
             return Err(Error::Benchmark("unsupported detector report contract".to_string()));
         }
         if self.expected_documents.is_empty() || self.expected_documents.values().any(|doc| doc.pages == 0) {
@@ -298,7 +309,7 @@ pub(super) fn expected_calls(pages: usize, iterations: usize) -> Result<usize> {
 fn valid_time(value: f64) -> bool {
     value.is_finite() && value >= 0.0
 }
-fn valid_sha256(value: &str) -> bool {
+pub(super) fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 

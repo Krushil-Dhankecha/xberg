@@ -55,6 +55,7 @@ fn report() -> ModelBenchmarkReport {
     ModelBenchmarkReport {
         schema_version: 2,
         quality_assessed: false,
+        geometry: None,
         xberg_build_id: "bounded-contract-test".to_string(),
         cohort_sha256: "e".repeat(64),
         expected_documents: BTreeMap::from([(
@@ -420,3 +421,6 @@ fn should_require_alternating_execution_order_across_repetitions() {
         "Benchmark error: detector paired execution order mismatch"
     );
 }
+
+#[path = "geometry_tests.rs"]
+mod geometry_scoring;

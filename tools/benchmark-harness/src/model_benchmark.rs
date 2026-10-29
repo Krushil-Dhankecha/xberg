@@ -14,12 +14,14 @@ use crate::corpus::CorpusDocument;
 use crate::{CohortManifest, Error, Result};
 
 mod contract;
+mod geometry;
 mod input;
 mod resources;
 #[cfg(test)]
 mod tests;
 
 pub use contract::{DetectorMeasurement, DetectorPageRow, ExpectedDocument, ModelBenchmarkReport, ModelIdentity};
+pub use geometry::GeometryEvidence;
 pub use resources::{PairedProcessResources, ResourceHostIdentity};
 
 use input::{PreparedInput, read_document, validate_file_type};
@@ -45,6 +47,8 @@ pub struct ModelBenchmarkConfig {
     pub dpi: i32,
     pub confidence_threshold: f32,
     pub expected_pages: Option<usize>,
+    /// Hash-bound COCO geometry annotations; absent keeps timing-only reporting.
+    pub geometry_annotations: Option<PathBuf>,
 }
 
 impl Default for ModelBenchmarkConfig {
@@ -59,6 +63,7 @@ impl Default for ModelBenchmarkConfig {
             dpi: DEFAULT_RENDER_DPI,
             confidence_threshold: DEFAULT_CONFIDENCE,
             expected_pages: None,
+            geometry_annotations: None,
         }
     }
 }
@@ -310,7 +315,7 @@ fn measure_document(
     Ok(())
 }
 
-/// Run actual detectors. Successful output is timing/count evidence, not a quality qualification.
+/// Run actual detectors; optional bbox metrics do not constitute quality qualification.
 pub async fn run_model_benchmark(config: &ModelBenchmarkConfig) -> Result<ModelBenchmarkReport> {
     validate_config(config)?;
     let config = config.clone();
@@ -326,6 +331,11 @@ fn run_detectors(config: &ModelBenchmarkConfig) -> Result<ModelBenchmarkReport> 
     let cohort_sha256 = hash_file(&config.cohort)?;
     let documents = load_documents(config)?;
     let expected = plan_documents(&documents, config)?;
+    let geometry = config
+        .geometry_annotations
+        .as_ref()
+        .map(|path| geometry::load(path, &documents, &expected))
+        .transpose()?;
     let mut engines = [
         prepare_detector(detectors[0], config.confidence_threshold)?,
         prepare_detector(detectors[1], config.confidence_threshold)?,
@@ -341,13 +351,19 @@ fn run_detectors(config: &ModelBenchmarkConfig) -> Result<ModelBenchmarkReport> 
     if hash_file(&config.cohort)? != cohort_sha256 {
         return Err(Error::Benchmark("cohort manifest changed during inference".to_string()));
     }
-    ModelBenchmarkReport::new(
+    let mut report = ModelBenchmarkReport::new(
         config,
         engines.map(|engine| engine.identity),
         expected,
         rows,
         cohort_sha256,
-    )
+    )?;
+    if let Some(plan) = geometry {
+        report.geometry = Some(plan.finish(&report)?);
+        report.schema_version = contract::SCORED_REPORT_SCHEMA_VERSION;
+        report.quality_assessed = true;
+    }
+    Ok(report)
 }
 
 pub fn print_model_table(report: &ModelBenchmarkReport) {
@@ -358,8 +374,8 @@ pub fn print_model_table(report: &ModelBenchmarkReport) {
         report.actual_inference_calls
     );
     eprintln!(
-        "CPU, {} DPI, confidence {}, generic heuristics disabled; quality_assessed=false",
-        report.dpi, report.confidence_threshold
+        "CPU, {} DPI, confidence {}, generic heuristics disabled; quality_assessed={}",
+        report.dpi, report.confidence_threshold, report.quality_assessed
     );
     for model in &report.models {
         eprintln!(
