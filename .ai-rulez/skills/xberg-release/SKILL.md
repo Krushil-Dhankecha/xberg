@@ -24,7 +24,7 @@ a version in a package manifest.
 
 ### `mise run version:sync` runs three steps
 
-`mise run version:sync` (alias `mise run versions:sync`) runs, in order
+`mise run version:sync` runs, in order
 (`mise.toml`):
 
 1. `alef sync-versions` — the **alef-managed binding manifests** (their own

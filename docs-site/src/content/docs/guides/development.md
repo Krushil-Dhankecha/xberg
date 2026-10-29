@@ -22,7 +22,7 @@ Top-level tasks operate on the Rust core:
 
 ```bash title="Terminal"
 mise run build                # Build the Rust core (debug)
-mise run build:release        # Build the Rust core (release)
+mise run rust:build:release   # Build the Rust core (release)
 mise run test                 # Run Rust core tests
 mise run check                # Lint + format check across the whole repo
 ```
@@ -46,7 +46,7 @@ Suites](#end-to-end-test-suites)).
 
 ```bash title="Terminal"
 mise run build:all            # Build core + every binding
-mise run build:bindings       # Build every binding (via Alef)
+mise run alef:build           # Build every binding (via Alef)
 mise run test:all             # Run all tests (core + bindings)
 mise run test:bindings        # Run binding test suites only
 mise run test:cov             # All tests with coverage
@@ -74,7 +74,7 @@ RUST_LOG=debug cargo test -p xberg test_name -- --nocapture
 Bindings are generated and compiled by Alef. Build them all, then run their tests:
 
 ```bash title="Terminal"
-mise run build:bindings       # Compile every binding
+mise run alef:build           # Compile every binding
 mise run test:bindings        # Run every binding test suite
 ```
 
@@ -135,7 +135,7 @@ then regenerate:
 
 ```bash title="Terminal"
 mise run alef:generate        # Regenerate all Alef-managed output (alef all --clean, formatting via poly, no build)
-mise run alef:build           # Compile the bindings (same as build:bindings)
+mise run alef:build           # Compile the bindings
 mise run alef:sync            # Sync the version from Cargo.toml to every manifest
 mise run alef:verify          # Check that generated output is up to date
 ```

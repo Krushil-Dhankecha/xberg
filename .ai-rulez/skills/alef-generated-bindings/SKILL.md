@@ -60,7 +60,7 @@ There are no `[crate]`, `[languages.*]`, `[e2e]` or `[readme]` top-level tables,
 `alef.toml` declares **no rename mappings** — the generated Go trait type is
 `DocumentExtractor`, unchanged.
 
-Besides the canonical e2e tasks, this repo has `e2e:verify`, `e2e:lint`, `e2e:quick`, `e2e:lang`.
+Besides the canonical e2e tasks, this repo has `e2e:verify`, `e2e:lint`, `e2e:lang`.
 
 ## Core-side edits that break a regen
 
