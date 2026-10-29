@@ -4559,7 +4559,9 @@ mod tests {
 
     fn invented_dictionary(word: &str) -> Option<bool> {
         // The fragments are too short for the engine to judge, so only the confidence rule can remove them.
-        ["cook", "meat", "and", "eggs"].contains(&word.to_lowercase().as_str()).then_some(true)
+        ["cook", "meat", "and", "eggs"]
+            .contains(&word.to_lowercase().as_str())
+            .then_some(true)
     }
 
     fn parse_photo_page(min_line_confidence: f64) -> crate::ocr::hocr_parser::HocrParseResult {

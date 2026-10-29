@@ -66,9 +66,9 @@ use super::rendering::{
 };
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 use super::scoring::{
-    NativeTextStats, OcrPageNoiseVerdict, OcrPageSignals, accept_or_reject_ocr_page_counting_pruned, compute_quality_score,
-    mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence, pipeline_stage_score, pruned_words_of,
-    repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
+    NativeTextStats, OcrPageNoiseVerdict, OcrPageSignals, accept_or_reject_ocr_page_counting_pruned,
+    compute_quality_score, mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence,
+    pipeline_stage_score, pruned_words_of, repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
 };
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
