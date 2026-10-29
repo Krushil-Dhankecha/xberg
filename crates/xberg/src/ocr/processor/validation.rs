@@ -199,6 +199,17 @@ pub(crate) fn tessdata_search_dirs(override_path: Option<&Path>, tessdata_env: &
     dirs
 }
 
+/// The first directory of the search chain that holds the orientation and script model.
+///
+/// The model is looked up on its own: the directory that holds the recognition language can be
+/// a cache with `eng` and no `osd`, while a later directory in the chain holds both. Nothing is
+/// downloaded; when no directory holds the model, script detection does not run. ~keep
+pub(crate) fn osd_tessdata_dir(override_path: Option<&Path>, tessdata_env: &TessdataEnv) -> Option<String> {
+    tessdata_search_dirs(override_path, tessdata_env)
+        .into_iter()
+        .find(|dir| Path::new(dir).join("osd.traineddata").is_file())
+}
+
 const SYSTEM_TESSDATA_PATHS: &[&str] = &[
     "/opt/homebrew/share/tessdata",
     "/opt/homebrew/opt/tesseract/share/tessdata",
@@ -365,6 +376,22 @@ pub(super) fn strip_control_characters(text: &str) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_osd_model_is_found_in_a_later_directory_than_the_recognition_language() {
+        let cache = tempfile::tempdir().unwrap();
+        let system = tempfile::tempdir().unwrap();
+        std::fs::write(cache.path().join("eng.traineddata"), b"").unwrap();
+        std::fs::write(system.path().join("eng.traineddata"), b"").unwrap();
+        std::fs::write(system.path().join("osd.traineddata"), b"").unwrap();
+        let env = TessdataEnv {
+            tessdata_prefix: system.path().to_str().map(str::to_string),
+            cache_dir: None,
+        };
+        // The first directory of the chain has the language and no model; the second has both.
+        let found = osd_tessdata_dir(Some(cache.path()), &env);
+        assert_eq!(found.as_deref(), system.path().to_str());
+    }
 
     #[test]
     fn test_resolve_all_installed_languages_success() {

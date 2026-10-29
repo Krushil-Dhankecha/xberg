@@ -7,7 +7,8 @@ use super::api_pool::TesseractApiPool;
 use super::config::{apply_tesseract_variables, hash_config};
 use super::dictionary::WordDictionary;
 use super::validation::{
-    resolve_all_installed_languages, resolve_tessdata_path, strip_control_characters, validate_language_and_traineddata,
+    TessdataEnv, osd_tessdata_dir, resolve_all_installed_languages, resolve_tessdata_path, strip_control_characters,
+    validate_language_and_traineddata,
 };
 use crate::core::config::ExtractionConfig;
 /// GH#1630/GH#1621: the explicit-hint-then-embedded-PNG-density-then-`None` precedence is
@@ -2601,7 +2602,7 @@ const HAN_LANGUAGE: &str = "chi_sim";
 
 /// `true` when the page's script is Han, by Tesseract's own orientation and script detection.
 ///
-/// Detection needs `osd.traineddata` next to the language data. Without it the page is not Han
+/// Detection needs `osd.traineddata` in a directory of the tessdata search chain. Without it the page is not Han
 /// as far as this function can tell, and the first OCR pass stands. Detection reads the page
 /// image again and does not touch the recognition result of the first pass.
 fn page_script_is_han(
@@ -2615,11 +2616,9 @@ fn page_script_is_han(
         .into_rgb8();
     let (width, height) = rgb_image.dimensions();
 
-    let languages: Vec<String> = config.language.split('+').map(|lang| lang.trim().to_string()).collect();
-    let tessdata_path = resolve_tessdata_path(&languages, config.tessdata_path.as_deref())?;
-    if !std::path::Path::new(&tessdata_path).join("osd.traineddata").is_file() {
+    let Some(tessdata_path) = osd_tessdata_dir(config.tessdata_path.as_deref(), &TessdataEnv::from_process()) else {
         return Ok(false);
-    }
+    };
 
     let api = api_pool.checkout(&tessdata_path, OSD_LANGUAGE, config.oem)?;
     let _ = api.set_page_seg_mode(TessPageSegMode::PSM_OSD_ONLY);
