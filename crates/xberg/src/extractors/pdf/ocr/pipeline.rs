@@ -1015,6 +1015,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                         known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
+                        native_page_layers: None,
                     };
                     // See `extract_with_ocr_for_page`'s doc comment on
                     // `points_per_pixel_override`: this call hands the stage a single
@@ -1174,6 +1175,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                         known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
+                        native_page_layers: None,
                     };
                     let points_per_pixel_override = {
                         let (_, page_height_pt) = page_dimensions_pt(&render_doc, *page_idx);
@@ -1823,6 +1825,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
         .as_ref()
         .and_then(|ocr| ocr.quality_thresholds.clone())
         .unwrap_or_default();
+    let mut noise_verdict_pages: std::collections::HashSet<u32> = std::collections::HashSet::new();
     if let Some(producing_backend) = backend.as_ref() {
         let confidence_semantics = producing_backend.confidence_semantics();
         let producing_backend_name = producing_backend.name().to_string();
@@ -1850,6 +1853,11 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 confidence_semantics,
                 confidence,
             );
+            // The verdict decides whether the page keeps its text layer (see below). A page
+            // the noise gate discarded has blank text and keeps the layer already. ~keep
+            if acceptance.verdict.is_some() && !acceptance.discarded {
+                noise_verdict_pages.insert(*page_number);
+            }
             *text = acceptance.content;
         }
     }
@@ -1867,6 +1875,26 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
         for text in ocr_results.values_mut() {
             if let std::borrow::Cow::Owned(repaired) = repair_ocr_numeric_tokens(text) {
                 *text = repaired;
+            }
+        }
+    }
+
+    // A page whose OCR text is judged recognition noise keeps its text layer first, when that
+    // layer is readable text. A forced page is replaced by definition and keeps no layer. ~keep
+    let mut page_layers_before_noise: ahash::AHashMap<u32, String> = ahash::AHashMap::new();
+    if all_pages_failed_policy == AllPagesFailedPolicy::PreserveNative && !noise_verdict_pages.is_empty() {
+        let layers = super::document::clean_native_page_layers(
+            native_text,
+            boundaries,
+            Some(&noise_verdict_pages),
+            &ocr_output_thresholds,
+        );
+        for (page_number, layer) in layers {
+            if let Some(text) = ocr_results.get_mut(&page_number)
+                && let Some(missing) = super::document::layer_lines_absent_from_ocr(&layer, text)
+            {
+                *text = format!("{missing}\n\n{text}");
+                page_layers_before_noise.insert(page_number, missing);
             }
         }
     }
@@ -1981,6 +2009,14 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
     // here rather than beside the repair at the top. ~keep
     if numeric_repair_enabled(config) {
         apply_numeric_repair_to_structured_ocr_pages(&mut structured_ocr_pages);
+    }
+    // The structured page keeps the layer first as well, after the passes above rebuilt it. ~keep
+    for (page_number, layer) in &page_layers_before_noise {
+        if accepted_replacements.contains_key(page_number)
+            && let Some(page_doc) = structured_ocr_pages.get_mut(page_number)
+        {
+            super::document::prepend_layer_to_page_document(page_doc, layer);
+        }
     }
 
     let result = apply_ocr_page_replacements(native_text, boundaries, &accepted_replacements);
@@ -2306,6 +2342,9 @@ pub(crate) struct PageOcrHints {
     pub(crate) known_full_page_scan: bool,
     /// One-indexed document page numbers selected by automatic fabricated-map routing.
     pub(crate) single_block_pages: Option<std::sync::Arc<std::collections::HashSet<u32>>>,
+    /// Readable text layers by one-indexed document page, for a whole-document run that
+    /// keeps the layer first on a page whose OCR text is judged recognition noise.
+    pub(crate) native_page_layers: Option<std::sync::Arc<ahash::AHashMap<u32, String>>>,
 }
 
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -2676,6 +2715,7 @@ pub(super) async fn extract_with_ocr_for_page(
     // empty string is ambiguous -- a blank page produces one too -- and the structured
     // paragraphs of a rejected page must be dropped along with its text.
     let mut rejected_pages = vec![false; total_pages];
+    let mut noise_verdict_pages = vec![false; total_pages];
     let mut all_page_paragraphs: Vec<Option<Vec<crate::pdf::structure::types::PdfParagraph>>> = vec![None; total_pages];
     let mut public_ocr_pages = ahash::AHashMap::new();
     // Written only by the two OCR-paragraph assembly blocks below (`layout-detection`
@@ -3715,6 +3755,7 @@ pub(super) async fn extract_with_ocr_for_page(
                 );
                 page_texts[page_idx] = acceptance.content;
                 rejected_pages[page_idx] = acceptance.discarded;
+                noise_verdict_pages[page_idx] = acceptance.verdict.is_some() && !acceptance.discarded;
                 if let Some(verdict) = acceptance.verdict {
                     recognition_noise_verdicts.push(verdict);
                 }
@@ -3800,6 +3841,7 @@ pub(super) async fn extract_with_ocr_for_page(
             );
             page_texts[page_idx] = acceptance.content;
             rejected_pages[page_idx] = acceptance.discarded;
+            noise_verdict_pages[page_idx] = acceptance.verdict.is_some() && !acceptance.discarded;
             if let Some(verdict) = acceptance.verdict {
                 recognition_noise_verdicts.push(verdict);
             }
@@ -3853,6 +3895,24 @@ pub(super) async fn extract_with_ocr_for_page(
         _ => None,
     };
 
+    // A whole-document run keeps the readable text layer first on a page whose OCR text is
+    // judged recognition noise; the caller hands the layers in through the page hints. ~keep
+    let mut layer_before_noise: Vec<Option<String>> = vec![None; total_pages];
+    if let Some(layers) = page_ocr_hints.as_ref().and_then(|hints| hints.native_page_layers.as_ref()) {
+        for (page_idx, text) in page_texts.iter_mut().enumerate() {
+            if !noise_verdict_pages[page_idx] {
+                continue;
+            }
+            let page_number = (page_index_offset + page_idx + 1) as u32;
+            if let Some(layer) = layers.get(&page_number)
+                && let Some(missing) = super::document::layer_lines_absent_from_ocr(layer, text)
+            {
+                *text = format!("{missing}\n\n{text}");
+                layer_before_noise[page_idx] = Some(missing);
+            }
+        }
+    }
+
     let page_marker_cfg = config.pages.as_ref().filter(|p| p.insert_page_markers);
     let mut result = String::new();
     for (i, text) in page_texts.iter().enumerate() {
@@ -3883,6 +3943,22 @@ pub(super) async fn extract_with_ocr_for_page(
     for (page_idx, page_rejected) in rejected_pages.iter().enumerate() {
         if *page_rejected {
             all_page_paragraphs[page_idx] = None;
+        }
+    }
+    // The structured page keeps the layer first as well. A page without paragraphs is rebuilt
+    // from its page text below, which already holds the layer, unless its tables claim it. ~keep
+    for (page_idx, layer) in layer_before_noise.iter().enumerate() {
+        let Some(layer) = layer else { continue };
+        if rejected_pages[page_idx] {
+            continue;
+        }
+        let has_paragraphs = all_page_paragraphs[page_idx]
+            .as_ref()
+            .is_some_and(|paragraphs| !paragraphs.is_empty());
+        if has_paragraphs || pages_text_claimed_by_tables[page_idx] {
+            let mut paragraphs = crate::pdf::structure::adapters::ocr_text_to_paragraphs(layer);
+            paragraphs.extend(all_page_paragraphs[page_idx].take().unwrap_or_default());
+            all_page_paragraphs[page_idx] = Some(paragraphs);
         }
     }
     discard_ocr_elements_from_rejected_pages(&mut all_ocr_elements, &rejected_pages, page_index_offset);

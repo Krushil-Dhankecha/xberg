@@ -2233,7 +2233,38 @@ fn automatic_unmapped_text_hints(metadata: &crate::pdf::metadata::PdfExtractionM
         source_dpi: None,
         known_full_page_scan: false,
         single_block_pages: Some(std::sync::Arc::new(pages.iter().copied().collect())),
+        native_page_layers: None,
     })
+}
+
+/// Hints for the whole-document OCR fallback: the fabricated-text pages, plus the readable text
+/// layer of each page, so a page whose OCR text is judged recognition noise keeps its layer.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+fn whole_document_ocr_hints(
+    metadata: &crate::pdf::metadata::PdfExtractionMetadata,
+    native_text: &str,
+    boundaries: Option<&[crate::types::PageBoundary]>,
+    config: &ExtractionConfig,
+) -> Option<ocr::PageOcrHints> {
+    let thresholds = config
+        .ocr
+        .as_ref()
+        .and_then(|ocr| ocr.quality_thresholds.clone())
+        .unwrap_or_default();
+    let layers = ocr::clean_native_page_layers(native_text, boundaries.unwrap_or(&[]), None, &thresholds);
+    let layers = (!layers.is_empty()).then(|| std::sync::Arc::new(layers));
+    let mut hints = automatic_unmapped_text_hints(metadata);
+    if layers.is_some() {
+        hints
+            .get_or_insert_with(|| ocr::PageOcrHints {
+                source_dpi: None,
+                known_full_page_scan: false,
+                single_block_pages: None,
+                native_page_layers: None,
+            })
+            .native_page_layers = layers;
+    }
+    hints
 }
 
 /// PDF document extractor using xberg_native_pdf.
@@ -2990,7 +3021,7 @@ impl PdfExtractor {
                         path,
                         PageOcrLayoutContext {
                             pages: layout_pages,
-                            hints: automatic_unmapped_text_hints(&pdf_metadata),
+                            hints: whole_document_ocr_hints(&pdf_metadata, &native_text, boundaries.as_deref(), config),
                         },
                         #[cfg(feature = "layout-detection")]
                         markdown_layout_images.take(),

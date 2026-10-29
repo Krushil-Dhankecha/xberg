@@ -132,6 +132,75 @@ pub(super) fn flat_ocr_page_document(text: &str) -> crate::types::internal::Inte
     }
     doc
 }
+/// The text layer of each page whose layer is readable text, keyed by page number.
+///
+/// A page appears only when it has one valid, non-overlapping boundary and its layer passes the
+/// garble clauses of the native-text gate (`native_layer_is_clean`). A caller keeps such a layer
+/// beside OCR text that the noise verdict rejects. ~keep
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(crate) fn clean_native_page_layers(
+    native_text: &str,
+    boundaries: &[crate::types::PageBoundary],
+    pages: Option<&std::collections::HashSet<u32>>,
+    thresholds: &OcrQualityThresholds,
+) -> ahash::AHashMap<u32, String> {
+    let mut page_counts = std::collections::HashMap::new();
+    for boundary in boundaries {
+        *page_counts.entry(boundary.page_number).or_insert(0usize) += 1;
+    }
+    let mut layers = ahash::AHashMap::new();
+    for boundary in boundaries {
+        if page_counts.get(&boundary.page_number) != Some(&1) || pages.is_some_and(|p| !p.contains(&boundary.page_number)) {
+            continue;
+        }
+        let Some(layer) = native_text.get(boundary.byte_start..boundary.byte_end) else {
+            continue;
+        };
+        if super::scoring::native_layer_is_clean(layer, thresholds) {
+            layers.insert(boundary.page_number, layer.trim().to_string());
+        }
+    }
+    layers
+}
+/// The lines of a clean text layer that the OCR text does not already hold, or `None` when the
+/// OCR text holds every line. Lines compare as lowercase letters and digits, so a scan with a
+/// short invisible sidecar does not repeat its words. ~keep
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(crate) fn layer_lines_absent_from_ocr(layer: &str, ocr_text: &str) -> Option<String> {
+    fn key(text: &str) -> String {
+        text.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    }
+    let ocr_key = key(ocr_text);
+    let kept: Vec<&str> = layer
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            let line_key = key(line);
+            !line_key.is_empty() && !ocr_key.contains(&line_key)
+        })
+        .collect();
+    (!kept.is_empty()).then(|| kept.join("\n"))
+}
+/// Put the text layer first on a structured OCR page. Relationships of the page shift by the
+/// number of layer elements; the layer holds no table or image. ~keep
+#[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
+pub(super) fn prepend_layer_to_page_document(page_doc: &mut crate::types::internal::InternalDocument, layer: &str) {
+    use crate::types::internal::RelationshipTarget;
+
+    let mut elements = flat_ocr_page_document(layer).elements;
+    let shift = elements.len() as u32;
+    for relationship in &mut page_doc.relationships {
+        relationship.source += shift;
+        if let RelationshipTarget::Index(index) = &mut relationship.target {
+            *index += shift;
+        }
+    }
+    elements.append(&mut page_doc.elements);
+    page_doc.elements = elements;
+}
 /// Attach a page's OCR tables and OCR elements to its structured document.
 ///
 /// The mixed route used to discard both (#60): only `ocr_internal_document` was kept,
