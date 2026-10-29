@@ -147,9 +147,9 @@ const DRAWN_PAGE_PATH_DENSITY_MIN: f32 = 0.80;
 const TEXT_AREA_STUB_MAX: f32 = 0.03;
 
 /// Whether the text layer is a stub beside a page that is drawn: mostly path operators, so
-/// its prose is outlines or pictures that no text layer holds. Both text bounds are the
-/// scan's own: a stub covers at most [`TEXT_AREA_STUB_MAX`] of the page and holds at most
-/// [`OCR_SCAN_MAX_GLYPHS`] glyphs. GH#2313. ~keep
+/// its prose is outlines or pictures that no text layer holds. A stub covers at most
+/// [`TEXT_AREA_STUB_MAX`] of the page and holds at most [`OCR_SCAN_MAX_GLYPHS`] glyphs, the
+/// glyph cap that the scan-raster check already applies to a scan's own text. GH#2313. ~keep
 fn is_stub_layer_over_drawn_page(signals: &PageScanSignals) -> bool {
     signals.vector_path_density >= DRAWN_PAGE_PATH_DENSITY_MIN
         && signals.text_area_ratio <= TEXT_AREA_STUB_MAX
