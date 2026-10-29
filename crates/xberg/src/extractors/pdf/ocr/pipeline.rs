@@ -66,7 +66,7 @@ use super::rendering::{
 };
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 use super::scoring::{
-    NativeTextStats, OcrPageNoiseVerdict, accept_or_reject_ocr_page_counting_pruned, compute_quality_score,
+    NativeTextStats, OcrPageNoiseVerdict, OcrPageSignals, accept_or_reject_ocr_page_counting_pruned, compute_quality_score,
     mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence, pipeline_stage_score, pruned_words_of,
     repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
 };
@@ -1857,10 +1857,12 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 std::mem::take(text),
                 &ocr_output_thresholds,
                 &mut accumulated_warnings,
-                dictionary_ratio,
-                confidence_semantics,
-                confidence,
-                pruned_words,
+                OcrPageSignals {
+                    dict_invalid_word_ratio: dictionary_ratio,
+                    confidence_semantics,
+                    confidence,
+                    pruned: pruned_words,
+                },
             );
             *text = acceptance.content;
         }
@@ -3729,10 +3731,12 @@ pub(super) async fn extract_with_ocr_for_page(
                     page_content,
                     &ocr_output_thresholds,
                     &mut recognition_noise_warnings,
-                    dict_invalid_word_ratio,
-                    backend_confidence_semantics,
-                    confidence,
-                    pruned_words.as_ref(),
+                    OcrPageSignals {
+                        dict_invalid_word_ratio,
+                        confidence_semantics: backend_confidence_semantics,
+                        confidence,
+                        pruned: pruned_words.as_ref(),
+                    },
                 );
                 page_texts[page_idx] = acceptance.content;
                 rejected_pages[page_idx] = acceptance.discarded;
@@ -3823,10 +3827,12 @@ pub(super) async fn extract_with_ocr_for_page(
                 page_content,
                 &ocr_output_thresholds,
                 &mut recognition_noise_warnings,
-                dict_invalid_word_ratio,
-                backend_confidence_semantics,
-                confidence,
-                pruned_words.as_ref(),
+                OcrPageSignals {
+                    dict_invalid_word_ratio,
+                    confidence_semantics: backend_confidence_semantics,
+                    confidence,
+                    pruned: pruned_words.as_ref(),
+                },
             );
             page_texts[page_idx] = acceptance.content;
             rejected_pages[page_idx] = acceptance.discarded;

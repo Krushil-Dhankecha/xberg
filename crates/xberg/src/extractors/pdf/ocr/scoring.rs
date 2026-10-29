@@ -1124,6 +1124,16 @@ pub(super) struct OcrPageAcceptance {
     pub(super) discarded: bool,
     pub(super) verdict: Option<OcrPageNoiseVerdict>,
 }
+/// The signals the verdict of a page reads besides its text.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(super) struct OcrPageSignals<'a> {
+    pub(super) dict_invalid_word_ratio: Option<f64>,
+    pub(super) confidence_semantics: crate::plugins::ConfidenceSemantics,
+    pub(super) confidence: Option<f64>,
+    /// The words of the lines the engine removed from the page.
+    pub(super) pruned: Option<&'a OcrPrunedWords>,
+}
+
 /// [`accept_or_reject_ocr_page_counting_pruned`] for a page with no removed lines.
 #[cfg(all(test, any(feature = "ocr", feature = "ocr-pipeline")))]
 pub(super) fn accept_or_reject_ocr_page(
@@ -1140,10 +1150,12 @@ pub(super) fn accept_or_reject_ocr_page(
         content,
         thresholds,
         warnings,
-        dict_invalid_word_ratio,
-        confidence_semantics,
-        confidence,
-        None,
+        OcrPageSignals {
+            dict_invalid_word_ratio,
+            confidence_semantics,
+            confidence,
+            pruned: None,
+        },
     )
 }
 
@@ -1159,11 +1171,14 @@ pub(super) fn accept_or_reject_ocr_page_counting_pruned(
     content: String,
     thresholds: &OcrQualityThresholds,
     warnings: &mut Vec<crate::types::ProcessingWarning>,
-    dict_invalid_word_ratio: Option<f64>,
-    confidence_semantics: crate::plugins::ConfidenceSemantics,
-    confidence: Option<f64>,
-    pruned: Option<&OcrPrunedWords>,
+    signals: OcrPageSignals<'_>,
 ) -> OcrPageAcceptance {
+    let OcrPageSignals {
+        dict_invalid_word_ratio,
+        confidence_semantics,
+        confidence,
+        pruned,
+    } = signals;
     if content.trim().is_empty() {
         return OcrPageAcceptance {
             content,

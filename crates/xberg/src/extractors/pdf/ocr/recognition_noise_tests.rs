@@ -998,10 +998,12 @@ fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
         kept_text,
         &thresholds,
         &mut warnings,
-        None,
-        crate::plugins::ConfidenceSemantics::None,
-        None,
-        Some(&counts),
+        OcrPageSignals {
+            dict_invalid_word_ratio: None,
+            confidence_semantics: crate::plugins::ConfidenceSemantics::None,
+            confidence: None,
+            pruned: Some(&counts),
+        },
     );
     assert!(acceptance.verdict.is_some_and(|v| v.fragmented_noise));
     assert_eq!(warnings.len(), 1);
