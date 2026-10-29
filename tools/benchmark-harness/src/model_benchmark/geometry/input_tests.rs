@@ -130,3 +130,63 @@ fn mapping_page_dimensions_and_duplicate_bindings_fail_closed() {
         "invalid or duplicate geometry page binding"
     );
 }
+
+fn retained() -> (RetainedAnnotations, String, String) {
+    let (mut manifest, coco) = inputs();
+    let coco_json = serde_json::to_string(&coco).unwrap();
+    manifest.coco_sha256 = digest(coco_json.as_bytes());
+    let manifest_json = serde_json::to_string(&manifest).unwrap();
+    let manifest_hash = digest(manifest_json.as_bytes());
+    let coco_hash = manifest.coco_sha256.clone();
+    (
+        RetainedAnnotations {
+            manifest_json,
+            coco_json,
+        },
+        manifest_hash,
+        coco_hash,
+    )
+}
+
+#[test]
+fn retained_manifest_valid_digest_mutation_is_rejected() {
+    let (sources, _, coco_hash) = retained();
+    assert_eq!(
+        sources.decode(&"a".repeat(64), &coco_hash).unwrap_err(),
+        "geometry manifest hash mismatch"
+    );
+}
+
+#[test]
+fn retained_coco_valid_digest_mutation_is_rejected() {
+    let (sources, manifest_hash, _) = retained();
+    assert_eq!(
+        sources.decode(&manifest_hash, &"b".repeat(64)).unwrap_err(),
+        "geometry COCO hash mismatch"
+    );
+}
+
+#[test]
+fn retained_source_content_mutations_cannot_reuse_original_identities() {
+    let (sources, manifest_hash, coco_hash) = retained();
+    let (manifest, pages) = sources.decode(&manifest_hash, &coco_hash).unwrap();
+    assert_eq!(manifest.source, "independent synthetic annotations");
+    assert_eq!(pages[0].regions[0].region.bbox, [1., 2., 4., 6.]);
+    let mut changed = sources.clone();
+    changed.manifest_json.push(' ');
+    assert!(changed.decode(&manifest_hash, &coco_hash).is_err());
+    let mut changed = sources;
+    changed.coco_json.push(' ');
+    assert!(changed.decode(&manifest_hash, &coco_hash).is_err());
+}
+
+#[test]
+fn retained_sources_require_both_exact_source_fields() {
+    let (sources, _, _) = retained();
+    let value = serde_json::to_value(sources).unwrap();
+    for field in ["manifest_json", "coco_json"] {
+        let mut changed = value.clone();
+        changed.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<RetainedAnnotations>(changed).is_err());
+    }
+}

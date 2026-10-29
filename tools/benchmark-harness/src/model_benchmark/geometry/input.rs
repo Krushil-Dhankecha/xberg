@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::quality::geometry::{Region, validate_region};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnnotationManifest {
     pub schema_version: u32,
@@ -17,7 +17,7 @@ pub struct AnnotationManifest {
     pub pages: Vec<PageBinding>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PageBinding {
     pub document: String,
@@ -29,7 +29,7 @@ pub struct PageBinding {
     pub expected_annotations: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AnnotatedRegion {
     pub annotation_id: u64,
@@ -37,7 +37,7 @@ pub struct AnnotatedRegion {
     pub region: Region,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AnnotatedPage {
     pub binding: PageBinding,
@@ -173,9 +173,7 @@ fn validate_annotations(
 }
 
 pub fn decode(manifest: &AnnotationManifest, bytes: &[u8]) -> Result<Vec<AnnotatedPage>, String> {
-    use sha2::{Digest, Sha256};
-    let digest: String = Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect();
-    if digest != manifest.coco_sha256 {
+    if digest(bytes) != manifest.coco_sha256 {
         return Err("geometry COCO hash mismatch".into());
     }
     let coco: Coco = serde_json::from_slice(bytes).map_err(|error| format!("invalid COCO JSON: {error}"))?;
@@ -185,3 +183,38 @@ pub fn decode(manifest: &AnnotationManifest, bytes: &[u8]) -> Result<Vec<Annotat
 #[cfg(test)]
 #[path = "input_tests.rs"]
 mod tests;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedAnnotations {
+    pub manifest_json: String,
+    pub coco_json: String,
+}
+
+impl RetainedAnnotations {
+    pub fn decode(
+        &self,
+        manifest_hash: &str,
+        coco_hash: &str,
+    ) -> Result<(AnnotationManifest, Vec<AnnotatedPage>), String> {
+        const MAX_BYTES: usize = 64 * 1024 * 1024;
+        if self.manifest_json.len() > MAX_BYTES || self.coco_json.len() > MAX_BYTES {
+            return Err("geometry annotation file exceeds 64 MiB limit".into());
+        }
+        if digest(self.manifest_json.as_bytes()) != manifest_hash {
+            return Err("geometry manifest hash mismatch".into());
+        }
+        if digest(self.coco_json.as_bytes()) != coco_hash {
+            return Err("geometry COCO hash mismatch".into());
+        }
+        let manifest: AnnotationManifest = serde_json::from_str(&self.manifest_json)
+            .map_err(|error| format!("invalid geometry manifest JSON: {error}"))?;
+        let pages = decode(&manifest, self.coco_json.as_bytes())?;
+        Ok((manifest, pages))
+    }
+}
+
+fn digest(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
+}

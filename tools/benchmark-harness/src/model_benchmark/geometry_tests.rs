@@ -120,3 +120,64 @@ fn annotation_or_scorer_identity_changes_invalidate_scored_artifacts() {
             .contains("geometry evidence identity")
     );
 }
+
+#[test]
+fn valid_but_changed_manifest_digest_invalidates_saved_report() {
+    let mut report = scored();
+    report.geometry.as_mut().unwrap().annotation_manifest_sha256 = "a".repeat(64);
+    assert!(report.validate().is_err());
+}
+
+#[test]
+fn valid_but_changed_coco_digest_invalidates_saved_report() {
+    let mut report = scored();
+    report.geometry.as_mut().unwrap().coco_sha256 = "b".repeat(64);
+    assert!(report.validate().is_err());
+}
+
+#[test]
+fn retained_source_and_normalized_annotations_must_agree() {
+    let original = serde_json::to_value(scored()).unwrap();
+    for field in ["manifest_json", "coco_json"] {
+        let mut changed = original.clone();
+        changed["geometry"]["annotation_sources"][field] = json!("{}");
+        let report: ModelBenchmarkReport = serde_json::from_value(changed).unwrap();
+        assert!(report.validate().is_err(), "{field}");
+    }
+    let mut report = scored();
+    let geometry = report.geometry.as_mut().unwrap();
+    geometry.pages[0].regions[0].region.bbox[0] += 1.0;
+    geometry.ground_truth_sha256 = hash_bytes(&serde_json::to_vec(&geometry.pages).unwrap());
+    assert!(report.validate().is_err());
+    for field in [
+        "annotation_sources",
+        "pages",
+        "source",
+        "category_mapping",
+        "prediction_projection",
+    ] {
+        let mut changed = original.clone();
+        changed["geometry"].as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<ModelBenchmarkReport>(changed).is_err(),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn rehashed_retained_manifest_cannot_disagree_with_saved_normalization() {
+    let mut report = scored();
+    let geometry = report.geometry.as_mut().unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_str(&geometry.annotation_sources.manifest_json).unwrap();
+    manifest["source"] = json!("changed source description");
+    geometry.annotation_sources.manifest_json = serde_json::to_string(&manifest).unwrap();
+    geometry.annotation_manifest_sha256 = hash_bytes(geometry.annotation_sources.manifest_json.as_bytes());
+    assert!(
+        report
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("normalized annotations differ")
+    );
+}

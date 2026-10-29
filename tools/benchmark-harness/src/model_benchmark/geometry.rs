@@ -14,7 +14,7 @@ use crate::{Error, Result};
 
 #[path = "geometry/input.rs"]
 mod input;
-use input::{AnnotatedPage, AnnotationManifest};
+use input::{AnnotatedPage, AnnotationManifest, RetainedAnnotations};
 
 const MAX_ANNOTATION_BYTES: u64 = 64 * 1024 * 1024;
 const METRIC_CONTRACT: &str = concat!(
@@ -55,6 +55,7 @@ pub struct GeometryEvidence {
     pub qualification_complete: bool,
     pub source: String,
     pub annotation_manifest_sha256: String,
+    pub annotation_sources: RetainedAnnotations,
     pub coco_sha256: String,
     pub mapping_sha256: String,
     pub scorer_sha256: String,
@@ -84,14 +85,22 @@ pub(super) fn load(
         .unwrap_or_else(|| Path::new("."))
         .join(&manifest.coco_file);
     let coco_bytes = bounded_read(&coco_path)?;
+    let annotation_manifest_sha256 = hash_bytes(&bytes);
+    let annotation_sources = RetainedAnnotations {
+        manifest_json: String::from_utf8(bytes).map_err(|error| benchmark_error(error.to_string()))?,
+        coco_json: String::from_utf8(coco_bytes).map_err(|error| benchmark_error(error.to_string()))?,
+    };
+    let (manifest, pages) = annotation_sources
+        .decode(&annotation_manifest_sha256, &manifest.coco_sha256)
+        .map_err(benchmark_error)?;
     validate_mapping(&manifest.category_mapping, &manifest.prediction_projection)?;
-    let pages = input::decode(&manifest, &coco_bytes).map_err(benchmark_error)?;
     validate_raster_bindings(&pages, documents, expected)?;
     let evidence = GeometryEvidence {
         metric_contract: METRIC_CONTRACT.into(),
         qualification_complete: false,
         source: manifest.source,
-        annotation_manifest_sha256: hash_bytes(&bytes),
+        annotation_manifest_sha256,
+        annotation_sources,
         coco_sha256: manifest.coco_sha256,
         mapping_sha256: mapping_hash(&manifest.category_mapping, &manifest.prediction_projection)?,
         scorer_sha256: scorer_hash(),
@@ -218,11 +227,29 @@ impl GeometryEvidence {
                 "geometry evidence identity or metric contract mismatch",
             ));
         }
+        self.validate_sources()?;
         self.validate_pages(report)?;
         let (rows, iterations) = self.compute(report)?;
         if rows != self.rows || iterations != self.iterations {
             return Err(benchmark_error(
                 "geometry scores do not match retained detections and annotations",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_sources(&self) -> Result<()> {
+        let (manifest, pages) = self
+            .annotation_sources
+            .decode(&self.annotation_manifest_sha256, &self.coco_sha256)
+            .map_err(benchmark_error)?;
+        if self.source != manifest.source
+            || self.category_mapping != manifest.category_mapping
+            || self.prediction_projection != manifest.prediction_projection
+            || self.pages != pages
+        {
+            return Err(benchmark_error(
+                "geometry normalized annotations differ from retained sources",
             ));
         }
         Ok(())
