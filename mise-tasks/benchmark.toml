@@ -21,10 +21,6 @@ run = [
 description = "Validate independent layout ground-truth preservation and identity checks"
 run = "uv run --no-sync python -m pytest -q tools/benchmark-harness/tests/test_import_omnidocbench.py"
 
-["benchmark:compare"]
-description = "Framework comparison with quality guardrails (baseline vs layout)"
-run = 'cargo run --locked -p benchmark-harness -- compare --fixtures "{{vars.bench_fixtures}}" --guardrails'
-
 ["benchmark:local"]
 description = "Local head-to-head PDF benchmark: xberg vs liteparse (+docling if installed) with per-document gap report"
 run = "bash tools/benchmark-harness/scripts/bench_local.sh"
@@ -34,18 +30,6 @@ description = "Quick smoke of the local head-to-head (small fixture shard) to va
 env = { SHARD = "1/60" }
 run = "bash tools/benchmark-harness/scripts/bench_local.sh"
 
-["benchmark:pipeline:quick"]
-description = "Pipeline benchmark — native paths only (P1+P2)"
-run = 'cargo run --locked -p benchmark-harness -- pipeline-benchmark --fixtures "{{vars.bench_fixtures}}" --paths baseline,layout'
-
-["benchmark:pipeline:all"]
-description = "Pipeline benchmark — all 6 extraction paths"
-run = 'cargo run --locked -p benchmark-harness -- pipeline-benchmark --fixtures "{{vars.bench_fixtures}}"'
-
-["benchmark:survey"]
-description = "Corpus-wide extraction stats for all PDFs"
-run = 'cargo run --locked -p benchmark-harness -- survey --fixtures "{{vars.bench_fixtures}}" --types pdf'
-
 ["benchmark:models"]
 description = "Compare actual RT-DETR and PP-DocLayoutV3 detector timing and counts"
 run = 'cargo run --locked -p benchmark-harness -- model-benchmark --fixtures "{{vars.bench_fixtures}}"'
@@ -53,49 +37,6 @@ run = 'cargo run --locked -p benchmark-harness -- model-benchmark --fixtures "{{
 ["benchmark:models:validate"]
 description = "Validate detector artifact identities and complete page/arm counts"
 run = "cargo run --locked -p benchmark-harness -- model-benchmark-validate"
-
-["benchmark:split"]
-description = "Multi-document split-boundary benchmark (Auto accuracy, reconstruction, single-parse timing)"
-run = '''
-cargo run --locked -p benchmark-harness -- split-benchmark \
-  --fixtures "${SPLIT_FIXTURES_DIR:-tools/benchmark-harness/fixtures/split}"
-'''
-
-["benchmark:split:sweep"]
-description = "Split-boundary benchmark with the MultidocThresholds sweep grid"
-run = '''
-cargo run --locked -p benchmark-harness -- split-benchmark \
-  --fixtures "${SPLIT_FIXTURES_DIR:-tools/benchmark-harness/fixtures/split}" --sweep
-'''
-
-["benchmark:split:gen-fixtures"]
-description = "Regenerate synthesized multi-document split fixtures from the test_documents submodule"
-run = "bash tools/benchmark-harness/scripts/gen_split_fixtures.sh"
-
-["benchmark:generate-gt"]
-description = "Generate markdown ground truth from PDFs using Gemini"
-run = "uv run --no-sync tools/benchmark-harness/scripts/generate_markdown_gt.py"
-
-["benchmark:import:omnidocbench"]
-description = "Import OmniDocBench into benchmark fixtures (run download:omnidocbench first)"
-depends = ["benchmark:download:omnidocbench"]
-run = "python3 tools/benchmark-harness/scripts/import_omnidocbench.py tools/benchmark-harness/datasets/omnidocbench ."
-
-["benchmark:clean-results"]
-description = "Clean up benchmark results and profiles"
-run = 'rm -rf "benchmark-results" "flamegraphs"'
-
-["benchmark:candle-glm-ocr"]
-description = "Build and run benchmark harness with candle-glm-ocr backend"
-run = [{ task = "benchmark:candle", args = ["glm-ocr-bench"] }]
-
-["benchmark:candle-deepseek-ocr"]
-description = "Build and run benchmark harness with candle-deepseek-ocr backend"
-run = [{ task = "benchmark:candle", args = ["candle-deepseek-ocr-bench"] }]
-
-["benchmark:candle-paddleocr-vl-15"]
-description = "Build and run benchmark harness with candle-paddleocr-vl-15 backend"
-run = [{ task = "benchmark:candle", args = ["candle-paddleocr-vl-15-bench"] }]
 
 ["benchmark:corpus:cache:publish"]
 description = "Verify and publish the content-addressed reference corpus cache. Run after a corpus rebuild + build_corpus.py --stage materialize."

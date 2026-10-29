@@ -16,7 +16,6 @@ includes = [
   "mise-tasks/demo.toml",
   "mise-tasks/benchmark.toml",
   "mise-tasks/integrations.toml",
-  "mise-tasks/test-apps.toml",
 ]
 
 [tools]
@@ -89,10 +88,6 @@ run = [{ task = "build:core" }]
 [tasks."build:release"]
 description = "Build Rust core library only (release)"
 run = [{ task = "rust:build:release" }]
-
-[tasks."build:ci"]
-description = "Build Rust core library in CI mode"
-run = [{ task = "rust:build:ci" }]
 
 [tasks."build:core"]
 description = "Build Rust core library only (debug)"
@@ -175,18 +170,6 @@ run = "poly fmt --check ."
 description = "Run all checks (format + lint, no modifications)"
 run = [{ task = "format:check" }, { task = "lint:check" }]
 
-[tasks."check:android"]
-description = "cargo check xberg-dart + xberg-ffi for Android ABIs"
-run = [{ task = "rust:check:android" }]
-
-[tasks."check:ios"]
-description = "cargo check xberg-dart + xberg-swift for iOS targets (macOS only)"
-run = [{ task = "rust:check:ios" }]
-
-[tasks."check:mobile"]
-description = "cargo check Android + iOS mobile targets"
-run = [{ task = "rust:check:mobile" }]
-
 [tasks.update]
 description = "Update all dependencies within major versions (minor patches only)"
 run = [{ task = "deps:local update" }, "mise run deps update", { task = "integrations:update" }, "alef update"]
@@ -202,10 +185,6 @@ run = [
   "gau --update .",
 ]
 
-[tasks."cov:rust"]
-description = "Generate Rust coverage report"
-run = [{ task = "rust:test:ci" }]
-
 [tasks."cov:all"]
 description = "Generate coverage for all languages"
 run = [{ task = "rust:test:ci" }, "alef test --coverage"]
@@ -213,28 +192,6 @@ run = [{ task = "rust:test:ci" }, "alef test --coverage"]
 [tasks.clean]
 description = "Remove build artifacts across all languages"
 run = ["cargo clean", "alef clean", "rm -rf coverage.lcov dist/ .alef/"]
-
-[tasks."validate:config"]
-description = "Validate the mise task configuration"
-run = "mise tasks validate"
-
-[tasks."validate:all"]
-description = "Validate all project configurations"
-run = [{ task = "validate:config" }]
-
-[tasks."pdfium:download"]
-description = "Download PDFium runtime"
-run = "bash scripts/download_pdfium_runtime.sh"
-
-[tasks."pdfium:install:macos"]
-description = "Install system PDFium on macOS"
-depends = ["os:require darwin"]
-run = "brew install pdfium-core"
-
-[tasks."pdfium:install:linux"]
-description = "Install PDFium on Linux (downloads prebuilt)"
-depends = ["os:require linux"]
-run = "bash scripts/download_pdfium_runtime.sh"
 
 [tasks."fixtures:generate"]
 description = "Generate all (or selected) test fixtures + ground-truth sidecars"
@@ -267,10 +224,6 @@ run = [
 [tasks."poly:verify:tool-scopes"]
 description = "Check external Poly formatters are restricted to their intended languages"
 run = "python3 scripts/ci/check-poly-tool-scopes.py"
-
-[tasks."supported-counts:sync"]
-description = "Synchronize published format counts with the MIME registry"
-run = ["python3 scripts/sync_supported_counts.py sync", "alef readme", { task = "plugin:generate" }]
 
 [tasks."supported-counts:verify"]
 description = "Test and verify published format counts against the MIME registry"
@@ -325,17 +278,9 @@ run = [
   "python3 scripts/tests/test_verify_pi_package.py",
 ]
 
-[tasks."plugin:hermes:test"]
-description = "Verify the Hermes bridge against a real MCP stdio fixture"
-run = "uv run --no-project --python 3.11 --with mcp==2.3.0 --with PyYAML==6.0.3 python scripts/tests/test_hermes_plugin.py"
-
 [tasks."plugin:skills:test"]
 description = "Verify public skill ownership and resource freshness"
 run = ["python3 scripts/tests/test_public_skills.py", "python3 scripts/sync_public_skills.py --check"]
-
-[tasks."plugin:launcher:test"]
-description = "Verify npm launcher preserves caller directory and relative configuration"
-run = "python3 scripts/tests/test_mcp_launcher_cwd.py"
 
 # ---- Versions and publishing -------------------------------------------------------------------
 
@@ -376,22 +321,6 @@ run = ['alef sync-versions --set "$usage_version"', { task = "version:sync" }]
 description = "Synchronize version from Cargo.toml to all package manifests"
 run = [{ task = "version:sync" }]
 
-[tasks."publish:validate"]
-description = "Validate publish manifests are consistent"
-run = "alef publish validate"
-
-[tasks."publish:prepare"]
-description = "Prepare packages for publishing (vendor deps, stage FFI)"
-run = "alef publish prepare"
-
-[tasks."publish:build"]
-description = "Build release artifacts for all languages"
-run = "alef publish build"
-
-[tasks."publish:package"]
-description = "Package built artifacts into distributable archives"
-run = "alef publish package -o dist/"
-
 # ---- alef --------------------------------------------------------------------------------------
 
 [tasks."alef:generate"]
@@ -409,10 +338,6 @@ run = "alef build"
 [tasks."alef:sync"]
 description = "Sync version from Cargo.toml to all manifests"
 run = "alef sync-versions"
-
-[tasks."alef:docs"]
-description = "Generate API reference documentation"
-run = "alef docs"
 
 [tasks."alef:verify:readme-paths"]
 description = "Check every alef.toml readme/docs path (templates, snippets) resolves on disk"

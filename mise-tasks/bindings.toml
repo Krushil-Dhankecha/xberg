@@ -11,14 +11,6 @@ run = [{ task = "deps:local", args = ["update", "python"] }]
 description = "Upgrade Python dependencies to latest including breaking changes (uv sync --upgrade)"
 run = [{ task = "deps:local", args = ["upgrade", "python"] }]
 
-["node:update"]
-description = "Update Node.js dependencies within major versions (pnpm up)"
-run = [{ task = "deps:local", args = ["update", "node"] }]
-
-["node:upgrade"]
-description = "Upgrade Node.js dependencies to latest including breaking changes (pnpm up --latest)"
-run = [{ task = "deps:local", args = ["upgrade", "node"] }]
-
 ["ruby:update"]
 description = "Update Ruby dependencies within major versions (bundle update --conservative)"
 run = [{ task = "deps:local", args = ["update", "ruby"] }]
@@ -75,37 +67,7 @@ run = ["mise run deps update dart"]
 description = "Upgrade Dart dependencies to latest including breaking changes (dart pub upgrade --major-versions)"
 run = ["mise run deps upgrade dart"]
 
-["swift:update"]
-description = "Update Swift dependencies (swift package update)"
-run = ["mise run deps update swift"]
-
-["swift:upgrade"]
-description = "Upgrade Swift dependencies (swift package update)"
-run = ["mise run deps upgrade swift"]
-
-# kotlin-android has no managed lockfile; its versions are pinned by alef regeneration. ~keep
-["kotlin-android:update"]
-description = "Update Kotlin/Android dependencies (no-op — versions pinned by alef regen)"
-run = ["mise run deps update kotlin-android"]
-
-["kotlin-android:upgrade"]
-description = "Upgrade Kotlin/Android dependencies (no-op — versions pinned by alef regen)"
-run = ["mise run deps upgrade kotlin-android"]
-
-["zig:update"]
-description = "Update Zig dependencies (re-fetch each URL pinned in build.zig.zon)"
-run = [{ task = "deps:local", args = ["update", "zig"] }]
-
-["zig:upgrade"]
-description = "Upgrade Zig dependencies (zig fetch --save for each .url in build.zig.zon)"
-run = [{ task = "deps:local", args = ["upgrade", "zig"] }]
-
 # ---- Python ------------------------------------------------------------------------------------
-
-["python:build:sdist:publish"]
-description = "Build the Python sdist using maturin"
-dir = "{{config_root}}/packages/python"
-run = 'dist="${DIST_DIR:-../../dist}" && mkdir -p "$dist" && maturin sdist --out "$dist"'
 
 ["python:publish:archive:prepare"]
 description = "Validate combined Python artifacts and prepare their public archive release"
@@ -162,11 +124,6 @@ description = "Build the C# binding in Release configuration"
 dir = "{{config_root}}/packages/csharp/Xberg"
 run = "dotnet build --configuration Release"
 
-["csharp:package"]
-description = "Pack the C# binding into a NuGet package (forwards extra args)"
-dir = "{{config_root}}/packages/csharp/Xberg"
-run = "dotnet pack --configuration Release"
-
 ["csharp:format"]
 description = "Format C# binding with dotnet format"
 dir = "{{config_root}}/packages/csharp/Xberg"
@@ -207,14 +164,6 @@ run = ["cargo build --locked --release --manifest-path rust/Cargo.toml", "swift 
 ["dart:format:context"]
 description = "Resolve Dart package language versions before formatting generated output"
 run = ["cd packages/dart && dart pub get", "cd e2e/dart && dart pub get --enforce-lockfile"]
-
-["dart:codegen"]
-description = "Generate flutter_rust_bridge bindings for Dart"
-run = [
-  "command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || cargo install flutter_rust_bridge_codegen --version 2.13.0",
-  "cd packages/dart && dart pub get",
-  "cd packages/dart/rust && flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml",
-]
 
 ["dart:setup"]
 description = "Setup Dart binding (codegen + native lib build + post-processing via alef)"

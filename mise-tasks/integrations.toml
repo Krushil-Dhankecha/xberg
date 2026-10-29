@@ -13,15 +13,6 @@ run = [{ task = "integrations:deps", args = ["update"] }]
 description = "Upgrade integration dependencies to latest and refresh lock files"
 run = [{ task = "integrations:deps", args = ["upgrade"] }]
 
-["integrations:build"]
-description = "Build publishable integration artifacts locally (packaging dry-run; Python only, pre-release-safe)"
-run = [{ task = "integrations:build:python" }]
-
-["integrations:build:java"]
-description = "Package the spring-ai integration (needs io.xberg:xberg already on Maven Central)"
-dir = "{{config_root}}/integrations/java/spring-ai"
-run = "mvn -q -DskipTests package"
-
 ["integrations:ci:build:python-binding"]
 description = "Build the abi3 Python wheel the integration jobs test against into dist/python"
 dir = "{{config_root}}/packages/python"

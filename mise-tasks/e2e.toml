@@ -4,10 +4,6 @@
 description = "Generate E2E tests for all languages from fixtures"
 run = [{ task = "dart:format:context" }, "alef e2e generate --strict"]
 
-["e2e:mock-server:build"]
-description = "Build the mock server for generated e2e suites"
-run = "bash scripts/e2e/build-mock-server.sh"
-
 ["e2e:build"]
 description = "Build all language bindings used by e2e suites (release)"
 run = "alef build --release --lang python,node,ruby,php,ffi,go,java,csharp,elixir,wasm,dart,kotlin_android,swift,zig"
