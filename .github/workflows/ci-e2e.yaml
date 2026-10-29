@@ -169,7 +169,7 @@ jobs:
             runs-on: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - lang: java
-            mise-tools: java
+            mise-tools: java maven
             runs-on: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - lang: csharp

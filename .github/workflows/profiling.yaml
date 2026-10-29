@@ -252,9 +252,6 @@ jobs:
       - name: Setup Layout Models
         uses: ./.github/actions/setup-layout-models
 
-      - name: Build Python bindings
-        run: mise run python:build:bindings
-
       - name: Run benchmark
         env:
           FRAMEWORK: xberg-python
@@ -361,9 +358,6 @@ jobs:
 
       - name: Setup Layout Models
         uses: ./.github/actions/setup-layout-models
-
-      - name: Build Python bindings
-        run: mise run python:build:bindings
 
       - name: Run benchmark
         env:
@@ -472,9 +466,6 @@ jobs:
       - name: Setup Layout Models
         uses: ./.github/actions/setup-layout-models
 
-      - name: Build Python bindings
-        run: mise run python:build:bindings
-
       - name: Run benchmark
         env:
           FRAMEWORK: xberg-python-batch
@@ -570,11 +561,6 @@ jobs:
 
       - name: Setup Layout Models
         uses: ./.github/actions/setup-layout-models
-
-      - name: Build Node bindings and install locally
-        env:
-          TARGET: x86_64-unknown-linux-gnu
-        run: mise run node:build:bindings
 
       - name: Run benchmark
         env:
@@ -672,11 +658,6 @@ jobs:
       - name: Setup Layout Models
         uses: ./.github/actions/setup-layout-models
 
-      - name: Build Node bindings and install locally
-        env:
-          TARGET: x86_64-unknown-linux-gnu
-        run: mise run node:build:bindings
-
       - name: Run benchmark
         env:
           FRAMEWORK: xberg-node-batch
@@ -763,7 +744,7 @@ jobs:
         run: pnpm bin >> "$GITHUB_PATH"
 
       - name: Build WASM bindings
-        run: mise run wasm:build:bindings
+        run: mise run wasm:build:all
 
       - name: Run benchmark
         env:
@@ -851,7 +832,7 @@ jobs:
         run: pnpm bin >> "$GITHUB_PATH"
 
       - name: Build WASM bindings
-        run: mise run wasm:build:bindings
+        run: mise run wasm:build:all
 
       - name: Run benchmark
         env:
@@ -953,11 +934,6 @@ jobs:
 
       - name: Vendor xberg core for Ruby
         run: python3 scripts/ci/ruby/vendor-xberg-core.py
-
-      - name: Build Ruby native gem
-        env:
-          PLATFORM: x86_64-linux
-        run: mise run ruby:build:bindings
 
       - name: Compile Ruby native extension
         shell: bash
@@ -1068,11 +1044,6 @@ jobs:
       - name: Vendor xberg core for Ruby
         run: python3 scripts/ci/ruby/vendor-xberg-core.py
 
-      - name: Build Ruby native gem
-        env:
-          PLATFORM: x86_64-linux
-        run: mise run ruby:build:bindings
-
       - name: Compile Ruby native extension
         shell: bash
         run: scripts/ci/ruby/compile-extension.sh
@@ -1180,9 +1151,6 @@ jobs:
         working-directory: packages/go
         run: go mod download
 
-      - name: Build Go bindings
-        run: mise run go:build:bindings
-
       - name: Run benchmark
         env:
           FRAMEWORK: xberg-go-sync
@@ -1283,9 +1251,6 @@ jobs:
         working-directory: packages/go
         run: go mod download
 
-      - name: Build Go bindings
-        run: mise run go:build:bindings
-
       - name: Run benchmark
         env:
           FRAMEWORK: xberg-go-batch
@@ -1375,7 +1340,7 @@ jobs:
         uses: ./.github/actions/setup-layout-models
 
       - name: Build Java bindings
-        run: mise run java:build:bindings
+        run: mise run java:build:release
 
       - name: Run benchmark
         env:
@@ -1470,7 +1435,7 @@ jobs:
           install: "false"
 
       - name: Build C# bindings
-        run: mise run csharp:build:bindings
+        run: mise run csharp:build:release
 
       - name: Run benchmark
         env:
