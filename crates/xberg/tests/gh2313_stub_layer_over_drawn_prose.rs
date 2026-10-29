@@ -120,7 +120,10 @@ fn drawn_prose_under_a_stub_text_layer_is_sent_to_ocr() {
         confidence >= DEFAULT_SCANNED_MIN_CONFIDENCE,
         "a drawn page with a stub text layer must clear the default threshold: got {confidence}"
     );
-    assert!(selected, "the page must be in scanned_pages so auto mode runs OCR on it");
+    assert!(
+        selected,
+        "the page must be in scanned_pages so auto mode runs OCR on it"
+    );
 }
 
 #[test]
@@ -142,6 +145,9 @@ fn a_page_with_a_real_text_layer_is_not_sent_to_ocr() {
 #[test]
 fn a_text_layer_wider_than_the_stub_bound_is_not_sent_to_ocr() {
     let (confidence, selected) = scan_result(&build_pdf_sized(600, &STUB, OVERSIZED_FONT));
-    assert_eq!(confidence, 0.0, "a text layer past the stub bound keeps a score of zero");
+    assert_eq!(
+        confidence, 0.0,
+        "a text layer past the stub bound keeps a score of zero"
+    );
     assert!(!selected);
 }
