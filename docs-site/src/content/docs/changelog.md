@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **(layout): Simplify YOLO decoding and remove its function-length lint exception.** (#1567)
 - **(development): Consolidate Mise task aliases and align guides with supported commands.**
 - **(development): Upgrade binding generation to Alef 0.115.6.**
   Fix Python keyword exports and stubs, Ruby typed payloads, and frozen-file cache refresh.
