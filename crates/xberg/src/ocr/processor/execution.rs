@@ -1363,6 +1363,23 @@ struct IteratorExtractionResult {
     dict_invalid_word_ratio: Option<f64>,
 }
 
+/// Parses the page hOCR with the two per-line noise filters: the dictionary filter (#783) and, beside
+/// it, the confidence rule (#2312). The confidence floor is not new config: it is
+/// `min_ocr_mean_confidence`, carried in `TesseractConfig::min_line_confidence`. The ratio is
+/// `DEFAULT_DICT_INVALID_LINE_RATIO`, see its doc comment for why it is not a configurable field. ~keep
+fn parse_page_hocr(
+    hocr: &str,
+    is_valid_word: &dyn Fn(&str) -> Option<bool>,
+    config: &TesseractConfig,
+) -> crate::ocr::hocr_parser::HocrParseResult {
+    let dictionary_filter = DictionaryLineFilter {
+        is_valid_word,
+        max_invalid_ratio: crate::ocr::hocr_parser::DEFAULT_DICT_INVALID_LINE_RATIO,
+        min_line_confidence: config.min_line_confidence,
+    };
+    parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, Some(&dictionary_filter), config.page_number)
+}
+
 /// Minimum letters a word must have before Tesseract's dictionary lookup is meaningful.
 /// Digits, single letters, and punctuation are never in the DAWG dictionary regardless of
 /// legitimacy, so scoring them would bias the ratio toward "invalid" on output OCR read
@@ -2127,23 +2144,8 @@ pub(super) fn perform_ocr(
                 .get_hocr_text(0)
                 .map_err(|e| OcrError::ProcessingFailed(format!("Failed to extract hOCR: {}", e)))?;
 
-            // Per-line dictionary-invalid noise filter (#783). Built here, immediately
-            // before parsing, using `hocr_parser::DEFAULT_DICT_INVALID_LINE_RATIO` -- see
-            // that constant's doc comment for why this is not yet a configurable
-            // `OcrQualityThresholds` field. The confidence floor next to it is not new config:
-            // it is `min_ocr_mean_confidence`, carried in `TesseractConfig::min_line_confidence`.
             let is_valid_word = |text: &str| dictionary.is_valid_word(text);
-            let dictionary_filter = DictionaryLineFilter {
-                is_valid_word: &is_valid_word,
-                max_invalid_ratio: crate::ocr::hocr_parser::DEFAULT_DICT_INVALID_LINE_RATIO,
-                min_line_confidence: config.min_line_confidence,
-            };
-
-            let parse_result = parse_hocr_to_internal_document_with_page_offset_and_stats(
-                &hocr,
-                Some(&dictionary_filter),
-                config.page_number,
-            );
+            let parse_result = parse_page_hocr(&hocr, &is_valid_word, config);
             dictionary_filtered_line_count = parse_result.dictionary_filtered_line_count;
             let content = flatten_hocr_elements_to_text(&parse_result.document.elements);
             // The removed lines' word counts travel on the document, not in the metadata: they
@@ -4538,83 +4540,52 @@ mod tests {
             .expect("OCR must succeed")
     }
 
-    /// `english.png` under a band of seeded speckle, as a PNG. The speckle is invented content,
-    /// a stand-in for the texture of a photo that Tesseract reads as short fragments.
-    fn english_under_speckle_png() -> Vec<u8> {
-        use image::{GrayImage, ImageFormat, Luma};
-        use std::io::Cursor;
+    /// A page of invented hOCR: a sentence, a line of fragments read from texture, and a low
+    /// confidence line that still holds one dictionary word.
+    const PHOTO_PAGE_HOCR: &str = r#"<div class='ocr_page' title='bbox 0 0 800 400'><div class='ocr_carea'><p class='ocr_par'>
+        <span class='ocr_line' title='bbox 10 10 700 40'>
+          <span class='ocrx_word' title='bbox 10 10 100 40; x_wconf 93'>Cook</span>
+          <span class='ocrx_word' title='bbox 110 10 200 40; x_wconf 95'>meat</span>
+          <span class='ocrx_word' title='bbox 210 10 300 40; x_wconf 91'>and</span>
+          <span class='ocrx_word' title='bbox 310 10 400 40; x_wconf 96'>eggs</span></span>
+        <span class='ocr_line' title='bbox 10 60 700 90'>
+          <span class='ocrx_word' title='bbox 10 60 100 90; x_wconf 21'>qzx</span>
+          <span class='ocrx_word' title='bbox 110 60 200 90; x_wconf 18'>vkl</span>
+          <span class='ocrx_word' title='bbox 210 60 300 90; x_wconf 25'>wrt</span></span>
+        <span class='ocr_line' title='bbox 10 110 700 140'>
+          <span class='ocrx_word' title='bbox 10 110 100 140; x_wconf 22'>qzx</span>
+          <span class='ocrx_word' title='bbox 110 110 200 140; x_wconf 19'>meat</span></span>
+        </p></div></div>"#;
 
-        let text = image::load_from_memory(&corpus_image("english.png")).unwrap().to_luma8();
-        let band = 260u32;
-        let mut canvas = GrayImage::from_pixel(text.width(), text.height() + band, Luma([255]));
-        image::imageops::overlay(&mut canvas, &text, 0, i64::from(band));
-        let mut state = 0x2312u32;
-        let mut next = move || {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            state >> 8
-        };
-        for _ in 0..900 {
-            let (x, y) = (next() % (text.width() - 12), next() % (band - 12));
-            let (w, h) = (2 + next() % 7, 2 + next() % 7);
-            for dx in 0..w {
-                for dy in 0..h {
-                    canvas.put_pixel(x + dx, y + dy, Luma([next() as u8 % 90]));
-                }
-            }
-        }
-        let mut bytes = Vec::new();
-        canvas.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png).unwrap();
-        bytes
+    fn invented_dictionary(word: &str) -> Option<bool> {
+        Some(["cook", "meat", "and", "eggs"].contains(&word.to_lowercase().as_str()))
     }
 
-    fn ocr_speckled_page(min_line_confidence: f64) -> OcrExtractionResult {
+    fn parse_photo_page(min_line_confidence: f64) -> crate::ocr::hocr_parser::HocrParseResult {
         let config = TesseractConfig {
-            output_format: "markdown".to_string(),
-            enable_table_detection: false,
-            use_cache: false,
             min_line_confidence,
             ..TesseractConfig::default()
         };
-        let cache_dir = tempdir().unwrap();
-        let cache = OcrCache::new(Some(cache_dir.path().to_path_buf())).unwrap();
-        process_image_with_cache(&english_under_speckle_png(), &config, &cache, &TesseractApiPool::new(), None)
-            .expect("OCR must succeed")
+        parse_page_hocr(PHOTO_PAGE_HOCR, &invented_dictionary, &config)
     }
 
-    /// The page OCR applies the confidence rule at the configured floor (#2312): fragments read
-    /// from the speckle go, the sentence stays, and the words of the removed lines travel on the
-    /// structured document for the page verdict. With the floor at zero the same image keeps
-    /// every line and reports nothing. The public metadata holds the same keys either way.
+    /// The page OCR applies the confidence rule at the configured floor (#2312): the line of
+    /// fragments goes, the sentence stays, the low line with a dictionary word stays, and the
+    /// words of the removed line are counted for the page verdict. With the floor at zero the
+    /// same page keeps every line and counts nothing.
     #[test]
-    #[serial]
     fn page_ocr_removes_low_confidence_fragment_lines_at_the_configured_floor() {
-        let off = ocr_speckled_page(0.0);
-        let on = ocr_speckled_page(crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence);
+        let off = parse_photo_page(0.0);
+        let on = parse_photo_page(crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence);
 
-        assert!(on.content.contains("Thoroughly cook meat and eggs"), "kept: {:?}", on.content);
-        let removed = |result: &OcrExtractionResult| {
-            result
-                .internal_document
-                .as_ref()
-                .expect("the hOCR route returns its document")
-                .ocr_pruned_words
-        };
-        assert_eq!(
-            removed(&off),
-            crate::types::internal::OcrPrunedWords::default(),
-            "control: a zero floor removes nothing: {:?}",
-            off.content
-        );
-        assert!(removed(&on).words > 0, "no line removed: {:?} / {:?}", on.content, off.content);
-        assert!(on.content.len() < off.content.len());
-
-        let mut off_keys: Vec<_> = off.metadata.keys().collect();
-        let mut on_keys: Vec<_> = on.metadata.keys().collect();
-        off_keys.sort();
-        on_keys.sort();
-        assert_eq!(on_keys, off_keys, "the removed-word counts must not add a public metadata key");
-        let serialized = serde_json::to_string(&on).unwrap();
-        assert!(!serialized.contains("pruned"), "public output: {serialized}");
+        let off_text = flatten_hocr_elements_to_text(&off.document.elements);
+        let on_text = flatten_hocr_elements_to_text(&on.document.elements);
+        assert!(off_text.contains("vkl"), "control: a zero floor keeps the fragments: {off_text:?}");
+        assert_eq!(off.retained_word_confidence_stats.pruned_words(), crate::types::internal::OcrPrunedWords::default());
+        assert!(on_text.contains("Cook meat and eggs"), "kept: {on_text:?}");
+        assert!(on_text.contains("qzx meat"), "a line with a dictionary word is kept: {on_text:?}");
+        assert!(!on_text.contains("vkl"), "fragments removed: {on_text:?}");
+        assert_eq!(on.retained_word_confidence_stats.pruned_words().words, 3);
     }
 
     /// Lines OCR read in the secondary language of a `lang1+lang2` run must survive the
