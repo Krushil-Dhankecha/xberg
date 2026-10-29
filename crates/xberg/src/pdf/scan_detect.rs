@@ -94,6 +94,11 @@ pub(crate) struct PageScanSignals {
     pub text_area_ratio: f32,
     /// Dominant raster codec on the page.
     pub codec: ImageCodecClass,
+    /// Path-drawing operators over all content operators, in `[0, 1]`
+    /// (`PageSignals::vector_path_density` from `xberg_native_pdf`). High on a page whose
+    /// prose is outlined glyphs or tiled pictures instead of text. See
+    /// [`is_stub_layer_over_drawn_page`]. ~keep
+    pub vector_path_density: f32,
     /// Whether the document producer looks like scanner software.
     pub producer_prior: ProducerPrior,
 }
@@ -131,6 +136,26 @@ fn is_header_sized_text(signals: &PageScanSignals) -> bool {
     signals.glyph_count == 0 || signals.text_area_ratio <= TEXT_AREA_HEADER_MAX
 }
 
+/// Path density from which a page's content is drawn, not typeset. It is the cutoff that
+/// `xberg_native_pdf` uses for outlined text (0.60) raised to 0.80: pages of this kind measure
+/// 0.88 to 0.96, while a text page with a photo measures about 0.01. ~keep
+const DRAWN_PAGE_PATH_DENSITY_MIN: f32 = 0.80;
+
+/// Largest text area a stub layer over a drawn page covers. The pages this rule exists for
+/// measure 0.021 to 0.029 (a title and a footer in a large font, just above
+/// [`TEXT_AREA_HEADER_MAX`]); a photo page with a real text layer measures 0.104. ~keep
+const TEXT_AREA_STUB_MAX: f32 = 0.03;
+
+/// Whether the text layer is a stub beside a page that is drawn: mostly path operators, so
+/// its prose is outlines or pictures that no text layer holds. Both text bounds are the
+/// scan's own: a stub covers at most [`TEXT_AREA_STUB_MAX`] of the page and holds at most
+/// [`OCR_SCAN_MAX_GLYPHS`] glyphs. GH#2313. ~keep
+fn is_stub_layer_over_drawn_page(signals: &PageScanSignals) -> bool {
+    signals.vector_path_density >= DRAWN_PAGE_PATH_DENSITY_MIN
+        && signals.text_area_ratio <= TEXT_AREA_STUB_MAX
+        && signals.glyph_count <= OCR_SCAN_MAX_GLYPHS
+}
+
 /// Grade one page's evidence. Pure, so it is testable without a [`PdfDocument`].
 pub(crate) fn score_page(signals: &PageScanSignals) -> f32 {
     if signals.image_coverage < IMAGE_COVERAGE_MIN {
@@ -138,7 +163,10 @@ pub(crate) fn score_page(signals: &PageScanSignals) -> f32 {
     }
 
     let full_page = signals.image_coverage >= IMAGE_COVERAGE_FULL;
-    let header_sized_text = is_header_sized_text(signals);
+    // A stub layer over a drawn page counts as header-sized only below full-page coverage:
+    // a full-page raster keeps its score (GH#2313). ~keep
+    let header_sized_text =
+        is_header_sized_text(signals) || (!full_page && is_stub_layer_over_drawn_page(signals));
 
     // Below full-page coverage, only a page whose native text is header-sized can be a
     // (partial-coverage) scan at all -- GH#1793. A page with substantial native text next to
@@ -187,7 +215,6 @@ const OCR_SCAN_COVERAGE_MIN: f32 = 0.25;
 /// A scan's own text layer is furniture: a page number, a running header, a stamp. A page
 /// with more glyphs than this beside a raster is a text page with a figure. A nine-word
 /// stamp is about sixty glyphs; a page of prose is thousands.
-#[cfg(any(feature = "ocr", feature = "ocr-pipeline", feature = "layout-detection"))]
 const OCR_SCAN_MAX_GLYPHS: usize = 400;
 
 /// The density, in dots per inch, of a page that is a scan: one raster with at most a stamp
@@ -306,6 +333,7 @@ fn page_signals(doc: &PdfDocument, page_index: usize) -> Option<PageScanSignals>
         glyph_count: signals.text_glyph_count,
         text_area_ratio: signals.text_area_ratio,
         codec: signals.codec,
+        vector_path_density: signals.vector_path_density,
         producer_prior: signals.producer_prior,
     })
 }

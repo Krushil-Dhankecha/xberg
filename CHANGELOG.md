@@ -89,6 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **(ocr): Read pages whose prose is drawn as pictures or outlines under a stub text layer.**
+  In auto mode, a page with 15 to 80 percent picture area, a drawn content stream (path density of 0.80 or more) and a text layer of at most 400 glyphs over 3 percent of the page now goes to OCR. Full-page pictures and pages with a real text layer keep their score. (GH#2313)
 - **(pdf): Cache Type 3 font-mapping provenance during text extraction.**
   Repeated glyphs retain their fallback markers without rescanning the font for every character. (#2307)
 - **(doc): Preserve superscript and subscript annotations in footnotes and comments.**

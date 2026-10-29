@@ -176,6 +176,7 @@ fn bare_scan() -> PageScanSignals {
         glyph_count: 0,
         text_area_ratio: 0.0,
         codec: ImageCodecClass::Dct,
+        vector_path_density: 0.0,
         producer_prior: ProducerPrior::Unknown,
     }
 }
@@ -212,6 +213,7 @@ fn a_text_page_with_a_figure_is_not_a_scan() {
         glyph_count: 2000,
         text_area_ratio: 0.45, // a real page of text, not header-sized (GH#1793 review)
         codec: ImageCodecClass::Dct,
+        vector_path_density: 0.0,
         producer_prior: ProducerPrior::Unknown,
     };
     assert_score(score_page(&signals), 0.0);
@@ -228,6 +230,7 @@ fn full_bleed_slide_with_visible_text_scores_below_default_threshold() {
         glyph_count: 133,
         text_area_ratio: 0.30, // a real amount of visible body text, not header-sized
         codec: ImageCodecClass::Dct,
+        vector_path_density: 0.0,
         producer_prior: ProducerPrior::Unknown,
     };
     assert_score(score_page(&signals), SCORE_FULL_PAGE_RASTER);
@@ -246,6 +249,7 @@ fn full_bleed_page_with_header_sized_text_clears_the_default_threshold() {
         glyph_count: 47,       // the corpus's smallest visible-text case (issue #1752)
         text_area_ratio: 0.02, // a header/footer/stamp, well under TEXT_AREA_HEADER_MAX
         codec: ImageCodecClass::Dct,
+        vector_path_density: 0.0,
         producer_prior: ProducerPrior::Unknown,
     };
     assert_score(score_page(&signals), 0.85);
@@ -262,10 +266,71 @@ fn hidden_sidecar_over_a_raster_is_detected() {
         text_area_ratio: 0.40, // a full invisible sidecar covers real area; irrelevant to
         // the outcome since invisible_text_ratio alone already qualifies for the bonus
         codec: ImageCodecClass::Other,
+        vector_path_density: 0.0,
         producer_prior: ProducerPrior::Unknown,
     };
     assert_score(score_page(&signals), 0.85);
     assert!(f64::from(score_page(&signals)) >= DEFAULT_SCANNED_MIN_CONFIDENCE);
+}
+
+/// A page whose prose is drawn as pictures and outlines: a quarter of the page is raster,
+/// almost every content operator is a path, and the text layer is a title and a footer
+/// (96 glyphs over 2.4 percent of the page), just above the header-sized cap.
+fn drawn_prose_with_stub_layer() -> PageScanSignals {
+    PageScanSignals {
+        image_coverage: 0.25,
+        glyph_count: 96,
+        text_area_ratio: 0.024,
+        vector_path_density: 0.96,
+        ..bare_scan()
+    }
+}
+
+#[test]
+fn drawn_prose_with_a_stub_text_layer_is_detected() {
+    let score = score_page(&drawn_prose_with_stub_layer());
+    assert_score(score, 0.85);
+    assert!(f64::from(score) >= DEFAULT_SCANNED_MIN_CONFIDENCE);
+}
+
+/// The losing field for the rule above: each of its four conditions, broken alone, must
+/// return the page to the pre-fix score of zero.
+#[test]
+fn drawn_prose_rule_needs_all_of_its_conditions() {
+    let few_paths = PageScanSignals {
+        vector_path_density: 0.014, // a photo page with a real text layer
+        ..drawn_prose_with_stub_layer()
+    };
+    let wide_text = PageScanSignals {
+        text_area_ratio: 0.104,
+        ..drawn_prose_with_stub_layer()
+    };
+    let long_text = PageScanSignals {
+        glyph_count: OCR_SCAN_MAX_GLYPHS + 1,
+        ..drawn_prose_with_stub_layer()
+    };
+    let small_picture = PageScanSignals {
+        image_coverage: IMAGE_COVERAGE_MIN - 0.01,
+        ..drawn_prose_with_stub_layer()
+    };
+    for (name, signals) in [
+        ("few paths", few_paths),
+        ("wide text layer", wide_text),
+        ("long text layer", long_text),
+        ("small picture area", small_picture),
+    ] {
+        assert!(score_page(&signals) == 0.0, "{name} must score zero, got {}", score_page(&signals));
+    }
+}
+
+/// A full-page raster keeps its score: the rule only widens the sub-full-page gate.
+#[test]
+fn drawn_prose_rule_does_not_change_a_full_page_raster() {
+    let signals = PageScanSignals {
+        image_coverage: 1.0,
+        ..drawn_prose_with_stub_layer()
+    };
+    assert_score(score_page(&signals), SCORE_FULL_PAGE_RASTER);
 }
 
 #[test]
@@ -317,6 +382,7 @@ fn score_never_leaves_the_unit_interval() {
         glyph_count: 0,
         text_area_ratio: 0.0,
         codec: ImageCodecClass::Ccitt,
+        vector_path_density: 0.0,
         producer_prior: ProducerPrior::Scanner,
     };
     let score = score_page(&maxed);
@@ -434,6 +500,7 @@ fn a_score_of_0_65_requires_bilevel_codec_and_scanner_producer_and_non_header_si
         glyph_count: 250,
         text_area_ratio: 0.5, // substantial, non-header-sized visible text
         codec: ImageCodecClass::Ccitt,
+        vector_path_density: 0.0,
         producer_prior: ProducerPrior::Scanner,
     };
     assert_score(score_page(&all_three), 0.65);
@@ -447,6 +514,7 @@ fn a_score_of_0_65_requires_bilevel_codec_and_scanner_producer_and_non_header_si
     );
     assert_score(
         score_page(&PageScanSignals {
+            vector_path_density: 0.0,
             producer_prior: ProducerPrior::Authoring,
             ..all_three
         }),
@@ -490,6 +558,7 @@ fn a_full_bleed_page_scores_by_text_area_not_by_glyph_count() {
             glyph_count,
             text_area_ratio: 0.02,
             codec: ImageCodecClass::Dct,
+            vector_path_density: 0.0,
             producer_prior: ProducerPrior::Authoring,
         });
         assert_score(header_sized, 0.85);
@@ -504,6 +573,7 @@ fn a_full_bleed_page_scores_by_text_area_not_by_glyph_count() {
             glyph_count,
             text_area_ratio: 0.40,
             codec: ImageCodecClass::Dct,
+            vector_path_density: 0.0,
             producer_prior: ProducerPrior::Authoring,
         });
         assert_score(substantial, SCORE_FULL_PAGE_RASTER);
