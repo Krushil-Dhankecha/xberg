@@ -1,6 +1,8 @@
 # Build artifacts
 target/
 build/
+!mise-tasks/integrations/build/
+!mise-tasks/integrations/ci/build/
 dist/
 .polylint/
 # Ad-hoc PDF/image debug binaries
