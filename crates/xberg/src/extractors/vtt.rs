@@ -711,6 +711,48 @@ mod tests {
         assert_eq!(parsed.cues[0].text, "stray line");
     }
 
+    #[test]
+    fn should_not_recover_header_metadata_as_untimed_text() {
+        for source in [
+            "WEBVTT\nKind: captions\nLanguage: en\n",
+            "WEBVTT\nKind: captions\nLanguage: en\n\n",
+        ] {
+            let parsed = parse_track(source);
+            assert!(parsed.cues.is_empty(), "header-only track produced cues: {source:?}");
+            assert!(parsed.warnings.is_empty());
+        }
+    }
+
+    #[test]
+    fn should_preserve_a_timing_line_immediately_after_the_signature() {
+        let parsed = parse_track("WEBVTT\n00:00:01.000 --> 00:00:02.500\nHello\n");
+
+        assert_eq!(parsed.cues.len(), 1);
+        assert_eq!(parsed.cues[0].text, "Hello");
+        assert_eq!(parsed.cues[0].start_millis, Some(1_000));
+        assert_eq!(parsed.cues[0].end_millis, Some(2_500));
+        assert!(parsed.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn should_skip_header_metadata_with_a_bom_and_crlf_line_endings() {
+        let source = "\u{feff}WEBVTT - Captions\r\nKind: captions\r\nLanguage: en\r\n\r\n\
+                      00:00:01.000 --> 00:00:02.500\r\nHello\r\n";
+        let document = WebVttExtractor::new()
+            .extract_content(source.as_bytes(), "text/vtt", &ExtractionConfig::default())
+            .await
+            .expect("BOM-prefixed CRLF track should extract");
+
+        assert_eq!(document.elements.len(), 1);
+        assert_eq!(document.elements[0].text, "Hello");
+        assert_eq!(document.metadata.title.as_deref(), Some("Captions"));
+        assert_eq!(
+            document.metadata.additional.get("cue_count"),
+            Some(&serde_json::json!(1))
+        );
+        assert!(document.processing_warnings.is_empty());
+    }
+
     /// The recovered text must not be mistaken for a real cue: `cue_attributes` emits no
     /// `start`/`end` keys at all rather than a fabricated `00:00:00.000`, which a consumer
     /// would be unable to tell from a cue that genuinely starts at zero.
