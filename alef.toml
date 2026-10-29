@@ -136,6 +136,18 @@ description = "Available embedding model presets when the embeddings feature is 
 template_dir = "templates/docs/skills"
 outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"]
 
+[workspace.docs.skills.templates.api]
+template = "api/SKILL.md.jinja"
+output = "api/SKILL.md"
+
+[workspace.docs.skills.templates.cli]
+template = "cli/SKILL.md.jinja"
+output = "cli/SKILL.md"
+
+[workspace.docs.skills.templates.mcp]
+template = "mcp/SKILL.md.jinja"
+output = "xberg-mcp-reference/SKILL.md"
+
 [workspace.docs.snippets]
 dirs = ["docs-site/src/snippets-generated"]
 inline_dirs = ["docs-site/src/snippets"]
