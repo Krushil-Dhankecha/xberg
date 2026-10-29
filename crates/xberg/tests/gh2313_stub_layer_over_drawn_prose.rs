@@ -4,6 +4,10 @@
 //! OCR router reads. The PDF is built here, so the test needs no fixture file.
 //!
 //! The controls break one condition of the rule each and must stay at a score of zero.
+//!
+//! The `scan_metadata` tests read the scan score with OCR off: they check the detector, not the
+//! route. The `routing` module runs the default route against a recording OCR backend and
+//! asserts whether the page reaches OCR.
 
 #![cfg(feature = "pdf")]
 
@@ -85,7 +89,7 @@ fn build_pdf_sized(rectangles: usize, text_lines: &[&str], font: usize) -> Vec<u
     pdf
 }
 
-fn scan_result(pdf: &[u8]) -> (f64, bool) {
+fn scan_metadata(pdf: &[u8]) -> (f64, bool) {
     let config = ExtractionConfig {
         disable_ocr: true,
         use_cache: false,
@@ -115,7 +119,7 @@ const STUB: [&str; 2] = ["Annual Report of the Council", "Page 1 of the bound vo
 
 #[test]
 fn drawn_prose_under_a_stub_text_layer_is_sent_to_ocr() {
-    let (confidence, selected) = scan_result(&build_pdf(600, &STUB));
+    let (confidence, selected) = scan_metadata(&build_pdf(600, &STUB));
     assert!(
         confidence >= DEFAULT_SCANNED_MIN_CONFIDENCE,
         "a drawn page with a stub text layer must clear the default threshold: got {confidence}"
@@ -128,7 +132,7 @@ fn drawn_prose_under_a_stub_text_layer_is_sent_to_ocr() {
 
 #[test]
 fn a_page_with_few_drawn_paths_is_not_sent_to_ocr() {
-    let (confidence, selected) = scan_result(&build_pdf(10, &STUB));
+    let (confidence, selected) = scan_metadata(&build_pdf(10, &STUB));
     assert_eq!(confidence, 0.0, "a page that is not drawn keeps a score of zero");
     assert!(!selected);
 }
@@ -137,17 +141,156 @@ fn a_page_with_few_drawn_paths_is_not_sent_to_ocr() {
 fn a_page_with_a_real_text_layer_is_not_sent_to_ocr() {
     let line = "The council met on the first day of the month and passed the budget in full";
     let lines = [line; 20];
-    let (confidence, selected) = scan_result(&build_pdf(600, &lines));
+    let (confidence, selected) = scan_metadata(&build_pdf(600, &lines));
     assert_eq!(confidence, 0.0, "a real text layer keeps a score of zero");
     assert!(!selected);
 }
 
 #[test]
 fn a_text_layer_wider_than_the_stub_bound_is_not_sent_to_ocr() {
-    let (confidence, selected) = scan_result(&build_pdf_sized(600, &STUB, OVERSIZED_FONT));
+    let (confidence, selected) = scan_metadata(&build_pdf_sized(600, &STUB, OVERSIZED_FONT));
     assert_eq!(
         confidence, 0.0,
         "a text layer past the stub bound keeps a score of zero"
     );
     assert!(!selected);
+}
+
+/// The default route (`ocr_strategy` auto) against a recording OCR backend.
+#[cfg(feature = "ocr")]
+mod routing {
+    use super::*;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use xberg::ExtractedDocument;
+    use xberg::core::config::OcrConfig;
+    use xberg::plugins::{OcrBackend, OcrBackendType, Plugin, register_ocr_backend, unregister_ocr_backend};
+
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    struct RecordingBackend;
+
+    impl Plugin for RecordingBackend {
+        fn name(&self) -> &str {
+            "tesseract"
+        }
+        fn version(&self) -> String {
+            "1.0.0".to_string()
+        }
+        fn initialize(&self) -> xberg::Result<()> {
+            Ok(())
+        }
+        fn shutdown(&self) -> xberg::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl OcrBackend for RecordingBackend {
+        async fn process_image(&self, _image_bytes: &[u8], _config: &OcrConfig) -> xberg::Result<ExtractedDocument> {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            let mut document = ExtractedDocument::default();
+            document.content = "Recognised prose".to_string();
+            Ok(document)
+        }
+        fn supports_language(&self, _language: &str) -> bool {
+            true
+        }
+        fn backend_type(&self) -> OcrBackendType {
+            OcrBackendType::Custom
+        }
+    }
+
+    fn auto_config() -> ExtractionConfig {
+        ExtractionConfig {
+            ocr: Some(OcrConfig {
+                backend: "tesseract".to_string(),
+                ..Default::default()
+            }),
+            ocr_embedded_images: Some(false),
+            use_cache: false,
+            enable_quality_processing: false,
+            pdf_options: Some(PdfConfig {
+                extract_tables: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// How many times the recording backend ran for `pdf` under `config`.
+    fn ocr_calls(pdf: &[u8], config: &ExtractionConfig) -> usize {
+        let _ = unregister_ocr_backend("tesseract");
+        register_ocr_backend(Arc::new(RecordingBackend)).expect("the recording backend registers");
+        CALLS.store(0, Ordering::SeqCst);
+        let result = extract_bytes_document_blocking(pdf, "application/pdf", config);
+        unregister_ocr_backend("tesseract").expect("the recording backend unregisters");
+        result.expect("extract synthetic PDF");
+        CALLS.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn auto_runs_ocr_on_drawn_prose_under_a_stub_text_layer() {
+        let calls = ocr_calls(&build_pdf(600, &STUB), &auto_config());
+        assert!(calls > 0, "the default route must send the drawn page to OCR");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn auto_keeps_a_page_with_few_drawn_paths_native() {
+        assert_eq!(ocr_calls(&build_pdf(10, &STUB), &auto_config()), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn auto_keeps_a_page_with_a_real_text_layer_native() {
+        let line = "The council met on the first day of the month and passed the budget in full";
+        assert_eq!(ocr_calls(&build_pdf(600, &[line; 20]), &auto_config()), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn auto_keeps_a_text_layer_past_the_stub_bound_native() {
+        let pdf = build_pdf_sized(600, &STUB, OVERSIZED_FONT);
+        assert_eq!(ocr_calls(&pdf, &auto_config()), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn disable_ocr_keeps_the_drawn_page_native() {
+        let config = ExtractionConfig {
+            disable_ocr: true,
+            ..auto_config()
+        };
+        assert_eq!(ocr_calls(&build_pdf(600, &STUB), &config), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn force_ocr_runs_ocr_on_the_few_paths_page() {
+        let config = ExtractionConfig {
+            force_ocr: true,
+            ..auto_config()
+        };
+        assert!(ocr_calls(&build_pdf(10, &STUB), &config) > 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn explicit_page_selection_decides_alone() {
+        let drawn = build_pdf(600, &STUB);
+        let few = build_pdf(10, &STUB);
+        let none = ExtractionConfig {
+            force_ocr_pages: Some(vec![2]),
+            ..auto_config()
+        };
+        let page_one = ExtractionConfig {
+            force_ocr_pages: Some(vec![1]),
+            ..auto_config()
+        };
+        assert!(ocr_calls(&few, &page_one) > 0, "a listed page is read");
+        assert_eq!(ocr_calls(&drawn, &none), 0, "an unlisted drawn page stays native");
+    }
 }
