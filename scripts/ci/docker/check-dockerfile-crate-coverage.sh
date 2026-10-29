@@ -34,7 +34,7 @@ cd "$(git rev-parse --show-toplevel)"
 members=()
 while IFS= read -r member; do
   members+=("$member")
-done < <(grep -oE '"crates/[a-zA-Z0-9_-]+"' Cargo.toml | tr -d '"' | sed 's#^crates/##')
+done < <(grep -oE '"crates/[a-zA-Z0-9_-]+"' Cargo.toml | tr -d '"' | sed 's#^crates/##' | sort -u)
 if [ "${#members[@]}" -eq 0 ]; then
   echo "::error::no workspace crates found; refusing an empty coverage check" >&2
   exit 1

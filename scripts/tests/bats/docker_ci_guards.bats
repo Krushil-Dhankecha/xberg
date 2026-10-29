@@ -135,3 +135,14 @@ python3 scripts/ci/docker/test_docker.py --image xberg:cli --variant cli --verbo
 	xberg_assert_status 1
 	xberg_assert_output_contains "COPY names 'crates/xberg', which .dockerignore excludes"
 }
+
+@test "Docker crate guard should count distinct member paths repeated by default members only once" {
+	cat >Cargo.toml <<'MANIFEST'
+[workspace]
+members = ["crates/xberg", "crates/xberg-py"]
+default-members = ["crates/xberg", "crates/xberg-py"]
+MANIFEST
+	run_coverage
+	xberg_assert_status 0
+	xberg_assert_output_contains 'Checked 2 workspace crates across 2 Dockerfiles.'
+}
