@@ -557,6 +557,9 @@ type MixedLayoutOutcome = (
 struct MixedOcrPageSelection<'a> {
     ocr: &'a [u32],
     single_block: &'a [u32],
+    /// Readable text layers a whole-document caller computed; `None` lets a selected-page run
+    /// read them from its own native text.
+    native_layers: Option<std::sync::Arc<ahash::AHashMap<u32, String>>>,
 }
 
 #[cfg(all(test, feature = "ocr", feature = "pdf"))]
@@ -620,6 +623,7 @@ pub(crate) async fn extract_mixed_ocr_native_with_layout_pages(
         MixedOcrPageSelection {
             ocr: ocr_page_numbers,
             single_block: single_block_page_numbers,
+            native_layers: None,
         },
         content,
         config,
@@ -683,6 +687,23 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
     if page_indices.is_empty() {
         return Ok(MixedOcrRun::native(native_text));
     }
+
+    // The readable text layers that a page keeps first when its OCR text is judged recognition
+    // noise. A forced page is replaced by definition and keeps none. ~keep
+    let ocr_output_thresholds = config
+        .ocr
+        .as_ref()
+        .and_then(|ocr| ocr.quality_thresholds.clone())
+        .unwrap_or_default();
+    let page_layers = match pages.native_layers {
+        Some(layers) => Some(layers),
+        None if all_pages_failed_policy == AllPagesFailedPolicy::PreserveNative => {
+            let layers =
+                super::document::clean_native_page_layers(native_text, boundaries, Some(&ocr_set), &ocr_output_thresholds);
+            (!layers.is_empty()).then(|| std::sync::Arc::new(layers))
+        }
+        None => None,
+    };
 
     // Layout detection for this mixed OCR route (#665). The full-document OCR routes
     // (`force_ocr`, the OCR-gate fallback) already run layout via `run_ocr_with_layout` ->
@@ -1015,7 +1036,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                         known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
-                        native_page_layers: None,
+                        native_page_layers: page_layers.clone(),
                     };
                     // See `extract_with_ocr_for_page`'s doc comment on
                     // `points_per_pixel_override`: this call hands the stage a single
@@ -1175,7 +1196,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                         known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
-                        native_page_layers: None,
+                        native_page_layers: page_layers.clone(),
                     };
                     let points_per_pixel_override = {
                         let (_, page_height_pt) = page_dimensions_pt(&render_doc, *page_idx);
@@ -1820,11 +1841,6 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
     // Pipeline stages already assess their output in `extract_with_ocr_for_page` using the
     // actual producing backend. Assess only the direct single-backend route here to avoid
     // duplicate warnings and guessed pipeline confidence semantics. ~keep
-    let ocr_output_thresholds = config
-        .ocr
-        .as_ref()
-        .and_then(|ocr| ocr.quality_thresholds.clone())
-        .unwrap_or_default();
     let mut noise_verdict_pages: std::collections::HashSet<u32> = std::collections::HashSet::new();
     if let Some(producing_backend) = backend.as_ref() {
         let confidence_semantics = producing_backend.confidence_semantics();
@@ -1882,19 +1898,14 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
     // A page whose OCR text is judged recognition noise keeps its text layer first, when that
     // layer is readable text. A forced page is replaced by definition and keeps no layer. ~keep
     let mut page_layers_before_noise: ahash::AHashMap<u32, String> = ahash::AHashMap::new();
-    if all_pages_failed_policy == AllPagesFailedPolicy::PreserveNative && !noise_verdict_pages.is_empty() {
-        let layers = super::document::clean_native_page_layers(
-            native_text,
-            boundaries,
-            Some(&noise_verdict_pages),
-            &ocr_output_thresholds,
-        );
-        for (page_number, layer) in layers {
-            if let Some(text) = ocr_results.get_mut(&page_number)
-                && let Some(missing) = super::document::layer_lines_absent_from_ocr(&layer, text)
+    if let Some(layers) = page_layers.as_ref() {
+        for page_number in &noise_verdict_pages {
+            if let Some(layer) = layers.get(page_number)
+                && let Some(text) = ocr_results.get_mut(page_number)
+                && let Some(missing) = super::document::layer_lines_absent_from_ocr(layer, text)
             {
                 *text = format!("{missing}\n\n{text}");
-                page_layers_before_noise.insert(page_number, missing);
+                page_layers_before_noise.insert(*page_number, missing);
             }
         }
     }
@@ -2143,6 +2154,7 @@ pub(crate) async fn extract_full_document_ocr_pipeline_per_page(
     }
     let (_, page_count, _) = open_pdf_for_page_ocr(content)?;
     let page_numbers = (1..=page_count as u32).collect::<Vec<_>>();
+    let native_layers = page_ocr_hints.as_ref().and_then(|hints| hints.native_page_layers.clone());
     let mut single_block_pages = page_ocr_hints
         .and_then(|hints| hints.single_block_pages)
         .map(|pages| pages.iter().copied().collect::<Vec<_>>())
@@ -2170,6 +2182,7 @@ pub(crate) async fn extract_full_document_ocr_pipeline_per_page(
         MixedOcrPageSelection {
             ocr: &page_numbers,
             single_block: &single_block_pages,
+            native_layers,
         },
         content,
         config,
