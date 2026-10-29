@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **(structured): Add opt-in partial-response recovery with batch-local validation diagnostics.** (#2318)
+  Return usable candidate fields separately from validated output and citation fusion.
 - **(structured): Add caller-selected image size limits and option-aware render caching.** (#2319)
   Resize images before PNG encoding while honoring the caller’s security budget.
 - **(benchmarks): Score layout detections against hash-bound COCO annotations.**
