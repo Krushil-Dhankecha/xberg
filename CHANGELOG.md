@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **(development): Consolidate Mise task aliases and align guides with supported commands.**
+- **(development): Upgrade binding generation to Alef 0.115.6.**
+  Fix Python keyword exports and stubs, Ruby typed payloads, and frozen-file cache refresh.
 - **(development): Run the complete benchmark harness with `mise run benchmark:test`.**
   Resource-monitor checks validate recorded timestamps without relying on operating-system sleep precision.
 - **(validation): Keep Markdown and request-policy regression checks compatible with upstream metadata.**
@@ -108,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **(development): Restore local Node and Java binding builds used by integration CI.**
   Integration jobs build and stage the checked-out bindings before testing their dependent packages.
 - **(vtt): Skip WebVTT header metadata while preserving the first timed cue.** (#2320)
+- **(development): Generate the MCP reference skill without shadowing Claude’s built-in `/mcp` command.**
 - **(packaging): Include canonical licensing notices in Docker images and custom native release archives.**
   Dart and Swift packaging checks use the checked-out release inputs.
 
