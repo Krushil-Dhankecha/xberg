@@ -66,6 +66,8 @@ jobs:
           ai-rulez-version: "latest"
       - name: Validate AI governance inputs
         run: mise run governance:verify
+      - name: Test the ai-rulez installation pins
+        run: mise run governance:test
 
   benchmark-scripts:
     if: github.event.pull_request.draft != true
@@ -94,6 +96,10 @@ jobs:
         run: mise run benchmark:validate:scripts
       - name: Validate Publish workflow contracts
         run: mise run release:test:contracts
+      - name: Test Python archive publication
+        run: mise run python:publish:archive:test
+      - name: Test the fixture generator
+        run: mise run fixtures:test
 
   plugin-freshness:
     if: github.event.pull_request.draft != true
