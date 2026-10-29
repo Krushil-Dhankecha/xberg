@@ -1,0 +1,246 @@
+# Per-binding build, format, lint, test, dependency and packaging tasks, included from mise.toml
+# [task_config]. Rust core tasks are in rust.toml and e2e suites in e2e.toml. ~keep
+
+# ---- Dependency refreshes (`deps` is the shared toolchains engine, `deps:local` xberg's) -------
+
+["python:update"]
+description = "Update Python dependencies within major versions (uv sync --upgrade-package)"
+run = [{ task = "deps:local", args = ["update", "python"] }]
+
+["python:upgrade"]
+description = "Upgrade Python dependencies to latest including breaking changes (uv sync --upgrade)"
+run = [{ task = "deps:local", args = ["upgrade", "python"] }]
+
+["node:update"]
+description = "Update Node.js dependencies within major versions (pnpm up)"
+run = [{ task = "deps:local", args = ["update", "node"] }]
+
+["node:upgrade"]
+description = "Upgrade Node.js dependencies to latest including breaking changes (pnpm up --latest)"
+run = [{ task = "deps:local", args = ["upgrade", "node"] }]
+
+["ruby:update"]
+description = "Update Ruby dependencies within major versions (bundle update --conservative)"
+run = [{ task = "deps:local", args = ["update", "ruby"] }]
+
+["ruby:upgrade"]
+description = "Upgrade Ruby dependencies to latest including breaking changes (bundle update --all)"
+run = [{ task = "deps:local", args = ["upgrade", "ruby"] }]
+
+["java:update"]
+description = "Update Java dependencies within major versions (mvn versions:use-next-versions)"
+run = [{ task = "deps:local", args = ["update", "java"] }]
+
+["java:upgrade"]
+description = "Upgrade Java dependencies to latest including breaking changes (mvn versions:use-latest-releases)"
+run = [{ task = "deps:local", args = ["upgrade", "java"] }]
+
+["php:update"]
+description = "Update PHP dependencies within major versions (composer update --with-dependencies)"
+run = [{ task = "deps", args = ["update", "php"] }]
+
+["php:upgrade"]
+description = "Upgrade PHP dependencies to latest including breaking changes (composer update --with-all-dependencies)"
+run = [{ task = "deps", args = ["upgrade", "php"] }]
+
+["go:update"]
+description = "Update Go dependencies within major versions (go get -u=patch + go mod tidy)"
+run = [{ task = "deps", args = ["update", "go"] }]
+
+["go:upgrade"]
+description = "Upgrade Go dependencies to latest including breaking changes (go get -u + go mod tidy)"
+run = [{ task = "deps", args = ["upgrade", "go"] }]
+
+["csharp:update"]
+description = "Update C# dependencies within major versions (dotnet outdated -u --version-lock Minor)"
+run = [{ task = "deps", args = ["update", "csharp"] }]
+
+["csharp:upgrade"]
+description = "Upgrade C# dependencies to latest including breaking changes (dotnet outdated -u)"
+run = [{ task = "deps", args = ["upgrade", "csharp"] }]
+
+["elixir:update"]
+description = "Update Elixir dependencies within major versions (mix deps.update --all)"
+run = [{ task = "deps", args = ["update", "elixir"] }]
+
+["elixir:upgrade"]
+description = "Upgrade Elixir dependencies to latest including breaking changes (mix hex.outdated --all + mix deps.update)"
+run = [{ task = "deps", args = ["upgrade", "elixir"] }]
+
+["dart:update"]
+description = "Update Dart dependencies within major versions (dart pub upgrade)"
+run = [{ task = "deps", args = ["update", "dart"] }]
+
+["dart:upgrade"]
+description = "Upgrade Dart dependencies to latest including breaking changes (dart pub upgrade --major-versions)"
+run = [{ task = "deps", args = ["upgrade", "dart"] }]
+
+["swift:update"]
+description = "Update Swift dependencies (swift package update)"
+run = [{ task = "deps", args = ["update", "swift"] }]
+
+["swift:upgrade"]
+description = "Upgrade Swift dependencies (swift package update)"
+run = [{ task = "deps", args = ["upgrade", "swift"] }]
+
+# kotlin-android has no managed lockfile; its versions are pinned by alef regeneration. ~keep
+["kotlin-android:update"]
+description = "Update Kotlin/Android dependencies (no-op — versions pinned by alef regen)"
+run = [{ task = "deps", args = ["update", "kotlin-android"] }]
+
+["kotlin-android:upgrade"]
+description = "Upgrade Kotlin/Android dependencies (no-op — versions pinned by alef regen)"
+run = [{ task = "deps", args = ["upgrade", "kotlin-android"] }]
+
+["zig:update"]
+description = "Update Zig dependencies (re-fetch each URL pinned in build.zig.zon)"
+run = [{ task = "deps", args = ["update", "zig"] }]
+
+["zig:upgrade"]
+description = "Upgrade Zig dependencies (zig fetch --save for each .url in build.zig.zon)"
+run = [{ task = "deps", args = ["upgrade", "zig"] }]
+
+# ---- Python ------------------------------------------------------------------------------------
+
+["python:build:sdist:publish"]
+description = "Build the Python sdist using maturin"
+dir = "{{config_root}}/packages/python"
+run = 'dist="${DIST_DIR:-../../dist}" && mkdir -p "$dist" && maturin sdist --out "$dist"'
+
+["python:publish:archive:prepare"]
+description = "Validate combined Python artifacts and prepare their public archive release"
+run = "python3 scripts/ci/python_archive_publication.py prepare"
+
+["python:publish:archive:wait"]
+description = "Refresh the central Python index and wait for verified public artifacts"
+run = "python3 scripts/ci/python_archive_publication.py wait"
+
+["python:publish:archive:test"]
+description = "Test Python archive publication and its bounded readiness gate"
+run = "uv run --no-sync python -m pytest scripts/ci/test_python_archive_publication.py -v"
+
+# ---- Go ----------------------------------------------------------------------------------------
+
+["go:publish:package"]
+description = "Package a versioned Go FFI release archive with static-link metadata"
+usage = '''
+arg "<target>" help="Rust target triple of the built FFI library"
+arg "<version>" help="Release version the archive carries"
+flag "--output-dir <dir>" env="OUTPUT_DIR" default="dist/go-ffi" help="Directory the archive is written to"
+'''
+run = 'bash scripts/ci/package-go-release.sh "$usage_target" "$usage_version" "$usage_output_dir"'
+
+["go:publish:package:musl"]
+description = "Build and package a versioned dynamic Go FFI archive for musl"
+usage = '''
+arg "<target>" help="Rust musl target triple"
+arg "<platform>" help="Release platform name of the archive"
+arg "<version>" help="Release version the archive carries"
+flag "--output-dir <dir>" env="OUTPUT_DIR" default="dist/go-ffi" help="Directory the archive is written to"
+'''
+run = '''
+bash scripts/ci/package-go-musl-release.sh "$usage_target" "$usage_platform" "$usage_version" "$usage_output_dir"
+'''
+
+# ---- PHP, WASM, Java, C# -----------------------------------------------------------------------
+
+["php:build"]
+description = "Build the xberg-php native extension (cdylib)"
+run = "cargo build --locked --release -p xberg-php"
+
+["wasm:build:all"]
+description = "Alias for rust:wasm:build:all (build all WASM targets + TS wrapper)"
+depends = ["rust:wasm:build:all"]
+
+["java:build:release"]
+description = "Build the Java binding via Maven (mvn package)"
+dir = "{{config_root}}/packages/java"
+run = "mvn -B -DskipTests package"
+
+["csharp:build:release"]
+description = "Build the C# binding in Release configuration"
+dir = "{{config_root}}/packages/csharp/Xberg"
+run = "dotnet build --configuration Release"
+
+["csharp:package"]
+description = "Pack the C# binding into a NuGet package (forwards extra args)"
+dir = "{{config_root}}/packages/csharp/Xberg"
+run = "dotnet pack --configuration Release"
+
+["csharp:format"]
+description = "Format C# binding with dotnet format"
+dir = "{{config_root}}/packages/csharp/Xberg"
+run = "dotnet format"
+
+["csharp:lint"]
+description = "Lint C# binding with dotnet format --verify-no-changes"
+dir = "{{config_root}}/packages/csharp/Xberg"
+run = "dotnet format --verify-no-changes"
+
+# ---- Kotlin/Android, Swift, Dart, Zig ----------------------------------------------------------
+
+["kotlin-android:format"]
+description = "Format Kotlin/Android binding with ktlint via gradle"
+dir = "{{config_root}}/packages/kotlin-android"
+run = "gradle ktlintFormat --no-daemon"
+
+["kotlin-android:test"]
+description = "Run Kotlin/Android binding tests"
+dir = "{{config_root}}/packages/kotlin-android"
+run = ["cargo build --locked --release -p xberg-ffi", "gradle test --no-daemon"]
+
+["swift:format"]
+description = "Format Swift binding with swift format"
+dir = "{{config_root}}/packages/swift"
+run = "swift format --in-place --recursive Sources Tests"
+
+["swift:lint"]
+description = "Lint Swift binding with swift format lint"
+dir = "{{config_root}}/packages/swift"
+run = "swift format lint --recursive Sources Tests"
+
+["swift:test"]
+description = "Run Swift binding tests"
+dir = "{{config_root}}/packages/swift"
+run = ["cargo build --locked --release --manifest-path rust/Cargo.toml", "swift test"]
+
+["dart:format:context"]
+description = "Resolve Dart package language versions before formatting generated output"
+run = ["cd packages/dart && dart pub get", "cd e2e/dart && dart pub get --enforce-lockfile"]
+
+["dart:codegen"]
+description = "Generate flutter_rust_bridge bindings for Dart"
+run = [
+  "command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || cargo install flutter_rust_bridge_codegen --version 2.13.0",
+  "cd packages/dart && dart pub get",
+  "cd packages/dart/rust && flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml",
+]
+
+["dart:setup"]
+description = "Setup Dart binding (codegen + native lib build + post-processing via alef)"
+run = "alef build --lang dart --release"
+
+["dart:format"]
+description = "Format Dart binding with dart format"
+dir = "{{config_root}}/packages/dart"
+run = "dart format ."
+
+["dart:test"]
+description = "Run Dart binding tests"
+dir = "{{config_root}}/packages/dart"
+run = ["cargo build --locked --release --manifest-path rust/Cargo.toml", "dart pub get", "dart test"]
+
+["zig:format"]
+description = "Format Zig binding with zig fmt"
+dir = "{{config_root}}/packages/zig"
+run = "zig fmt src"
+
+["zig:lint"]
+description = "Check Zig formatting with zig fmt --check"
+dir = "{{config_root}}/packages/zig"
+run = "zig fmt --check src"
+
+["zig:test"]
+description = "Run Zig binding tests"
+dir = "{{config_root}}/packages/zig"
+run = ["cargo build --locked --release -p xberg-ffi", "zig build test"]

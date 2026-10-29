@@ -1,0 +1,161 @@
+# Published-package test apps under test_apps/<lang>, included from mise.toml [task_config]. ~keep
+
+["test-apps:mock-server:build"]
+description = "Build mock-server binaries for standalone test_app tasks"
+hide = true
+run = 'bash "{{config_root}}/scripts/e2e/build-mock-server.sh" all'
+
+["test-apps:smoke"]
+description = "Run all test_app smoke tests"
+run = [
+  { task = "test-apps:smoke:python" },
+  { task = "test-apps:smoke:node" },
+  { task = "test-apps:smoke:ruby" },
+  { task = "test-apps:smoke:go" },
+  { task = "test-apps:smoke:java" },
+  { task = "test-apps:smoke:elixir" },
+  { task = "test-apps:smoke:csharp" },
+  { task = "test-apps:smoke:php" },
+  { task = "test-apps:smoke:rust" },
+  { task = "test-apps:smoke:wasm" },
+  { task = "test-apps:smoke:dart" },
+  { task = "test-apps:smoke:zig" },
+  { task = "test-apps:smoke:swift" },
+  { task = "test-apps:smoke:kotlin_android" },
+]
+
+["test-apps:smoke:python"]
+description = "Run Python test_app smoke test"
+dir = "{{config_root}}/test_apps/python"
+depends = ["test-apps:mock-server:build"]
+run = ["uv sync --prerelease=allow", "uv run --no-sync python -m pytest tests/test_smoke.py -v"]
+
+["test-apps:smoke:node"]
+description = "Run Node.js test_app smoke test"
+dir = "{{config_root}}/test_apps/node"
+depends = ["test-apps:mock-server:build"]
+run = ["pnpm install", "pnpm exec vitest run tests/smoke.test.ts"]
+
+["test-apps:smoke:ruby"]
+description = "Run Ruby test_app smoke test"
+dir = "{{config_root}}/test_apps/ruby"
+run = [
+  'export PATH="$HOME/.rbenv/shims:$HOME/.asdf/shims:$PATH" && ruby -S bundle install',
+  'export PATH="$HOME/.rbenv/shims:$HOME/.asdf/shims:$PATH" && ruby -S bundle exec rspec spec/smoke_spec.rb',
+]
+
+# The cgo binding needs the native lib resolved via `cmd/setup -print-env`; CGO_LDFLAGS is exported
+# in the same shell as the build so it is inherited. ~keep
+["test-apps:smoke:go"]
+description = "Run Go test_app smoke test"
+dir = "{{config_root}}/test_apps/go"
+env = { GOWORK = "off" }
+run = [
+  "rm -rf .lib",
+  '''
+set -e
+export CGO_LDFLAGS="$(go run github.com/xberg-io/xberg/packages/go/cmd/setup -print-env | sed -n 's/^export CGO_LDFLAGS="\(.*\)"$/\1/p')"
+go mod tidy
+go test -v -run '^Test_Smoke' ./...
+''',
+]
+
+["test-apps:smoke:java"]
+description = "Run Java test_app smoke test"
+dir = "{{config_root}}/test_apps/java"
+depends = ["test-apps:mock-server:build"]
+run = "mvn test -Dtest=SmokeTest"
+
+["test-apps:smoke:elixir"]
+description = "Run Elixir test_app smoke test"
+dir = "{{config_root}}/test_apps/elixir"
+run = ["mix deps.get", "mix test test/smoke_test.exs"]
+
+["test-apps:smoke:csharp"]
+description = "Run C# test_app smoke test"
+dir = "{{config_root}}/test_apps/csharp"
+depends = ["test-apps:mock-server:build"]
+run = ["dotnet restore", 'dotnet test --filter "FullyQualifiedName~SmokeTests"']
+
+# install.sh (alef-generated) installs the native extension via PIE and appends `extension=xberg`
+# to php.ini; that append persists across steps even though PIE's own env vars don't, so it must
+# run before the test invocation but can be a separate step. run_tests.php (alef-generated) is the
+# extension-load-aware runner -- bare `vendor/bin/phpunit` never loads the extension. ~keep
+["test-apps:smoke:php"]
+description = "Run PHP test_app smoke test"
+dir = "{{config_root}}/test_apps/php"
+depends = ["test-apps:mock-server:build"]
+run = ["composer install", "bash install.sh", "php run_tests.php"]
+
+["test-apps:smoke:rust"]
+description = "Run Rust test_app smoke test"
+dir = "{{config_root}}/test_apps/rust"
+run = "cargo test --locked --release --test smoke_test"
+
+["test-apps:smoke:wasm"]
+description = "Run WASM test_app smoke test"
+dir = "{{config_root}}/test_apps/wasm"
+run = ["pnpm install", "pnpm exec vitest run tests/smoke.test.ts"]
+
+# Pub.dev cannot ship the >100MB per-platform native set; the published package exposes a
+# download_libs executable that fetches the native from the GitHub release. Without it,
+# RustLib.init() finds no native and setUpAll fails. ~keep
+["test-apps:smoke:dart"]
+description = "Run Dart test_app smoke test"
+dir = "{{config_root}}/test_apps/dart"
+run = ["dart pub get", "dart run xberg:download_libs", "dart test test/smoke_test.dart"]
+
+# zig 0.16's `zig build` has no --test-filter; build.zig exposes a dedicated `smoke` step that runs
+# only smoke_test.zig (unchained from the full suite). ~keep
+["test-apps:smoke:zig"]
+description = "Run Zig test_app smoke test"
+dir = "{{config_root}}/test_apps/zig"
+run = "zig build smoke"
+
+# Swift/XCTest has no self-spawning mock-server fixture (unlike Python's conftest), so the URI smoke
+# tests need MOCK_SERVER_URL exported by the wrapper, which builds+starts the mock server around
+# the command. ~keep
+["test-apps:smoke:swift"]
+description = "Run Swift test_app smoke test"
+dir = "{{config_root}}/test_apps/swift_e2e"
+run = '"{{config_root}}/scripts/e2e/run-with-mock-server.sh" swift test --filter SmokeTests'
+
+["test-apps:smoke:kotlin_android"]
+description = "Run Kotlin Android test_app smoke test"
+dir = "{{config_root}}/test_apps/kotlin_android"
+depends = ["test-apps:mock-server:build"]
+run = './gradlew testDebugUnitTest --tests "*SmokeTest"'
+
+["test-apps:comprehensive"]
+description = "Run all test_app comprehensive tests"
+run = [
+  { task = "test-apps:comprehensive:python" },
+  { task = "test-apps:comprehensive:node" },
+  { task = "test-apps:comprehensive:ruby" },
+  { task = "test-apps:comprehensive:go" },
+]
+
+["test-apps:comprehensive:python"]
+description = "Run Python test_app comprehensive tests"
+dir = "{{config_root}}/test_apps/python"
+depends = ["test-apps:mock-server:build"]
+run = ["uv sync", "uv run --no-sync python -m pytest tests/ -v"]
+
+["test-apps:comprehensive:node"]
+description = "Run Node.js test_app comprehensive tests"
+dir = "{{config_root}}/test_apps/node"
+depends = ["test-apps:mock-server:build"]
+run = ["pnpm install", "pnpm exec vitest run"]
+
+["test-apps:comprehensive:ruby"]
+description = "Run Ruby test_app comprehensive tests"
+dir = "{{config_root}}/test_apps/ruby"
+run = [
+  'export PATH="$HOME/.rbenv/shims:$HOME/.asdf/shims:$PATH" && ruby -S bundle install',
+  'export PATH="$HOME/.rbenv/shims:$HOME/.asdf/shims:$PATH" && ruby -S bundle exec rspec',
+]
+
+["test-apps:comprehensive:go"]
+description = "Run Go test_app comprehensive tests"
+dir = "{{config_root}}/test_apps/go"
+run = "go test -v ./..."

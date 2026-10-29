@@ -5,23 +5,15 @@ setup() {
 	xberg_setup
 	REPOSITORY_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd -P)"
 	cd "$XBERG_WORK" || return
-	cp "$REPOSITORY_ROOT/.task/tools/integrations.yml" integrations.yml
 	mkdir -p crates/xberg-node
 	cp "$REPOSITORY_ROOT/crates/xberg-node/package.json" crates/xberg-node/
 	printf 'reviewed loader\n' >crates/xberg-node/index.js
 	printf 'export wrapper\n' >crates/xberg-node/index.mjs
 	printf 'binding wrapper\n' >crates/xberg-node/binding.cjs
 	printf 'type declarations\n' >crates/xberg-node/index.d.ts
-	cat >Taskfile.yml <<'TASK'
-version: '3'
-includes:
-  integrations: ./integrations.yml
-tasks:
-  build:
-    cmds:
-      - task: integrations:ci:build:node-binding
-TASK
 	unset INSTALL_STATUS BUILD_STATUS
+	# The task body runs directly: under `mise run`, the pnpm mise installs would shadow the stub.
+	BUILD_TASK="$REPOSITORY_ROOT/mise-tasks/integrations/ci/build/node-binding.sh"
 	xberg_stub pnpm \
 		'printf "%s|jobs=%s\n" "$*" "${CARGO_BUILD_JOBS:-unset}" >>"$XBERG_TRACE"' \
 		'if [ "$1" = install ]; then exit "${INSTALL_STATUS:-0}"; fi' \
@@ -31,7 +23,7 @@ TASK
 }
 
 @test "integration Node binding build should stage every exported entry point and preserve the reviewed loader" {
-	run task build
+	run "$BASH" "$BUILD_TASK"
 	xberg_assert_status 0
 	xberg_assert_trace 'install|jobs=unset
 exec napi build --no-js --output-dir . --release --platform|jobs=1'
@@ -47,7 +39,7 @@ exec napi build --no-js --output-dir . --release --platform|jobs=1'
 
 @test "integration Node binding build should stop before compilation when installation fails" {
 	export INSTALL_STATUS=7
-	run task build
+	run "$BASH" "$BUILD_TASK"
 	[ "$status" -ne 0 ]
 	xberg_assert_trace 'install|jobs=unset'
 	[ ! -e dist/node ]
@@ -55,7 +47,7 @@ exec napi build --no-js --output-dir . --release --platform|jobs=1'
 
 @test "integration Node binding build should reject a failed compiler despite an emitted native artifact" {
 	export BUILD_STATUS=9
-	run task build
+	run "$BASH" "$BUILD_TASK"
 	[ "$status" -ne 0 ]
 	[ -f crates/xberg-node/fixture.node ]
 	[ ! -e dist/node ]

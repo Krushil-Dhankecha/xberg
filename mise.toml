@@ -4,6 +4,21 @@
 lockfile = true
 lockfile_platforms = ["linux-x64", "linux-arm64", "macos-arm64", "macos-x64", "windows-x64"]
 
+# Task groups live in mise-tasks/*.toml; listing them replaces the default mise-tasks/ scan, so
+# that directory is named too. ~keep
+[task_config]
+includes = [
+  "mise-tasks",
+  "mise-tasks/rust.toml",
+  "mise-tasks/bindings.toml",
+  "mise-tasks/e2e.toml",
+  "mise-tasks/docs.toml",
+  "mise-tasks/demo.toml",
+  "mise-tasks/benchmark.toml",
+  "mise-tasks/integrations.toml",
+  "mise-tasks/test-apps.toml",
+]
+
 [tools]
 python = "3.13.18"
 uv = "0.13.6"
@@ -22,3 +37,390 @@ cargo-deny = "0.20.2"
 "github:taiki-e/cargo-llvm-cov" = "0.9.1"
 bats = "1.14.0"
 lychee = "0.24.2"
+
+[vars]
+# The xberg-io/actions revision the vendored Bats helper library was copied from. ~keep
+bats_lib_ref = "793d3a4d37a17009d91cce29f2825eda570d2abd"
+bench_fixtures = "tools/benchmark-harness/fixtures"
+
+# ---- Shared task bodies (xberg-io/toolchains, same tag as toolchains.toml) ---------------------
+
+[tasks."governance:hooks:install"]
+description = "Provision machine preferences and install reviewed AI governance hooks"
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/governance/hooks-install.sh"
+
+[tasks."version:show"]
+description = "Show current version from Cargo.toml"
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/version/cargo.sh"
+
+# The ecosystems whose xberg bodies match the shared engine. rust, python, node, ruby and java
+# carry repository specifics (extra locks, the parking_lot hold, the frozen bundle, mvn without a
+# wrapper) and run through mise-tasks/deps/local.sh instead. ~keep
+[tasks.deps]
+description = "Update or upgrade one ecosystem's dependencies, or every ecosystem"
+hide = true
+file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.0/tasks/deps/refresh.sh"
+env.DEPS_LANGS = "php go csharp elixir dart swift kotlin-android zig"
+env.DEPS_PHP_DIR = "."
+env.DEPS_CSHARP_DIR = "packages/csharp/Xberg"
+
+# ---- Entry points ------------------------------------------------------------------------------
+
+[tasks.default]
+description = "List available tasks"
+run = "mise tasks ls"
+
+[tasks.setup]
+description = "Install the mise toolchain and all dependencies, and set up the development environment"
+run = [
+  "mise install",
+  { task = "rust:install" },
+  "alef setup",
+  { task = "governance:generate" },
+  { task = "integrations:sync" },
+  { task = "governance:hooks:install" },
+]
+
+[tasks.build]
+description = "Build Rust core library only (debug)"
+run = [{ task = "build:core" }]
+
+[tasks."build:release"]
+description = "Build Rust core library only (release)"
+run = [{ task = "rust:build:release" }]
+
+[tasks."build:ci"]
+description = "Build Rust core library in CI mode"
+run = [{ task = "rust:build:ci" }]
+
+[tasks."build:core"]
+description = "Build Rust core library only (debug)"
+run = [{ task = "rust:build:dev" }]
+
+[tasks."build:bindings"]
+description = "Build all language bindings"
+run = [{ task = "alef:build" }]
+
+[tasks."build:all"]
+description = "Build Rust core library and all language bindings (debug)"
+run = [{ task = "build:core" }, { task = "build:bindings" }]
+
+[tasks."build:cli"]
+description = "Build the xberg CLI binary"
+run = [{ task = "rust:cli:build" }]
+
+[tasks.test]
+description = "Run Rust core tests"
+run = [{ task = "rust:test" }]
+
+[tasks."test:classic-ocr-cache"]
+description = "Seed and verify the complete classic OCR cache in offline inference"
+depends = ["rust:cli:build"]
+run = "python3 scripts/classic_ocr_cache_acceptance.py"
+
+[tasks."test:classic-ocr-cache:harness"]
+description = "Run fast contract tests for the classic OCR cache acceptance harness"
+run = "uv run --frozen --only-dev python -m pytest -q scripts/test_classic_ocr_cache_acceptance.py"
+
+[tasks."test:all"]
+description = "Run all test suites (Rust core + bindings)"
+run = [{ task = "test" }, { task = "test:scripts" }, "alef test"]
+
+[tasks."test:scripts"]
+description = "Run the contract tests for the repo's own shell and PowerShell scripts"
+run = [{ task = "test:scripts:bats" }, { task = "test:scripts:pester" }]
+
+[tasks."test:scripts:lib:sync"]
+description = "Refresh the vendored Bats helper library from xberg-io/actions"
+env = { BATS_LIB_REF = "{{vars.bats_lib_ref}}" }
+run = "scripts/task/sync-bats-lib.sh sync"
+
+[tasks."test:scripts:lib:check"]
+description = "Fail when the vendored Bats helper library has drifted from its pinned source"
+env = { BATS_LIB_REF = "{{vars.bats_lib_ref}}" }
+run = "scripts/task/sync-bats-lib.sh --check"
+
+[tasks."test:bindings"]
+description = "Run binding test suites only (skip Rust core)"
+run = "alef test"
+
+[tasks."test:cov"]
+description = "Run all tests with coverage"
+run = [{ task = "rust:test:ci" }, "alef test --coverage"]
+
+[tasks."test:ci"]
+description = "Run all tests with coverage (CI mode, alias for test:cov)"
+run = [{ task = "test:cov" }]
+
+[tasks.lint]
+description = "Lint all code via poly"
+run = "poly lint ."
+
+# `poly lint` never writes -- there is no autofix mode to opt out of, so this is a plain alias of
+# `lint`, not a stricter check-only variant. ~keep
+[tasks."lint:check"]
+description = "Lint all code via poly (alias of lint; poly lint never auto-fixes)"
+run = "poly lint ."
+
+[tasks.format]
+description = "Format all code via poly"
+run = "poly fmt --fix ."
+
+[tasks."format:check"]
+description = "Check code formatting without modifications"
+run = "poly fmt --check ."
+
+[tasks.check]
+description = "Run all checks (format + lint, no modifications)"
+run = [{ task = "format:check" }, { task = "lint:check" }]
+
+[tasks."check:android"]
+description = "cargo check xberg-dart + xberg-ffi for Android ABIs"
+run = [{ task = "rust:check:android" }]
+
+[tasks."check:ios"]
+description = "cargo check xberg-dart + xberg-swift for iOS targets (macOS only)"
+run = [{ task = "rust:check:ios" }]
+
+[tasks."check:mobile"]
+description = "cargo check Android + iOS mobile targets"
+run = [{ task = "rust:check:mobile" }]
+
+[tasks.update]
+description = "Update all dependencies within major versions (minor patches only)"
+run = [{ task = "deps:local update" }, { task = "deps update" }, { task = "integrations:update" }, "alef update"]
+
+[tasks.upgrade]
+description = "Upgrade all dependencies to latest including breaking changes"
+run = [
+  "rustup update stable",
+  { task = "deps:local upgrade" },
+  { task = "deps upgrade" },
+  { task = "integrations:upgrade" },
+  "alef update --latest || true",
+  "gau --update .",
+]
+
+[tasks."cov:rust"]
+description = "Generate Rust coverage report"
+run = [{ task = "rust:test:ci" }]
+
+[tasks."cov:all"]
+description = "Generate coverage for all languages"
+run = [{ task = "rust:test:ci" }, "alef test --coverage"]
+
+[tasks.clean]
+description = "Remove build artifacts across all languages"
+run = ["cargo clean", "alef clean", "rm -rf coverage.lcov dist/ .alef/"]
+
+[tasks."validate:config"]
+description = "Validate the mise task configuration"
+run = "mise tasks validate"
+
+[tasks."validate:all"]
+description = "Validate all project configurations"
+run = [{ task = "validate:config" }]
+
+[tasks."pdfium:download"]
+description = "Download PDFium runtime"
+run = "bash scripts/download_pdfium_runtime.sh"
+
+[tasks."pdfium:install:macos"]
+description = "Install system PDFium on macOS"
+depends = ["os:require darwin"]
+run = "brew install pdfium-core"
+
+[tasks."pdfium:install:linux"]
+description = "Install PDFium on Linux (downloads prebuilt)"
+depends = ["os:require linux"]
+run = "bash scripts/download_pdfium_runtime.sh"
+
+[tasks."fixtures:generate"]
+description = "Generate all (or selected) test fixtures + ground-truth sidecars"
+dir = "{{config_root}}/tools/generate_test_fixtures"
+usage = 'arg "[fixture]..." default="all" help="Fixture groups to generate"'
+run = "uv run python -m generate_test_fixtures ${usage_fixture:-all}"
+
+[tasks."fixtures:test"]
+description = "Run the fixture generator's smoke test suite"
+dir = "{{config_root}}/tools/generate_test_fixtures"
+run = "uv run pytest -q"
+
+# ---- Verification gates ------------------------------------------------------------------------
+
+[tasks."ffi:verify:declarations"]
+description = "Test the FFI parity checker and compare C# and Java against the C header"
+run = [
+  "python3 -m unittest scripts/ci/test_ffi_declaration_parity.py",
+  "python3 scripts/ci/check-ffi-declaration-parity.py",
+]
+
+[tasks."release:test:contracts"]
+description = "Verify release workflow and packaging contracts"
+run = [
+  "python3 scripts/ci/test_publish_workflow_contracts.py",
+  "python3 scripts/ci/test_php_release_contracts.py",
+  "python3 scripts/ci/test_ios_compiler_runtime.py",
+]
+
+[tasks."poly:verify:tool-scopes"]
+description = "Check external Poly formatters are restricted to their intended languages"
+run = "python3 scripts/ci/check-poly-tool-scopes.py"
+
+[tasks."supported-counts:sync"]
+description = "Synchronize published format counts with the MIME registry"
+run = ["python3 scripts/sync_supported_counts.py sync", "alef readme", { task = "plugin:generate" }]
+
+[tasks."supported-counts:verify"]
+description = "Test and verify published format counts against the MIME registry"
+run = [
+  "uv run --frozen --only-dev python -m pytest -q scripts/test_sync_supported_counts.py",
+  "python3 scripts/sync_supported_counts.py verify",
+]
+
+[tasks."verify:feature-parity"]
+description = "Check per-target feature aggregates still match `full` (GH#1443)"
+run = "python3 scripts/ci/check-feature-parity.py crates/xberg/Cargo.toml"
+
+[tasks."verify:docker-crates"]
+description = "Check every workspace member is COPYd, real, and survives .dockerignore"
+run = "bash scripts/ci/docker/check-dockerfile-crate-coverage.sh"
+
+# ---- Governance and plugin ---------------------------------------------------------------------
+
+[tasks."governance:test"]
+description = "Test the ai-rulez installations across CI and release workflows"
+run = "python3 scripts/tests/test_governance_runtime.py"
+
+[tasks."governance:generate"]
+description = "Generate local AI governance files with the reviewed ai-rulez CLI"
+run = "ai-rulez generate"
+
+[tasks."governance:validate"]
+description = "Validate the root AI governance configuration"
+run = "ai-rulez validate"
+
+[tasks."governance:check"]
+description = "Check materialized local governance outputs against shared sources"
+run = "ai-rulez generate --check --no-local --strict-config"
+
+# Coding-agent plugin (Claude Code, Cursor, Codex, Gemini, Kimi, OpenCode, Factory, Hermes, Pi).
+# Single source of truth: plugin/.ai-rulez/config.plugins.toml + plugin/.ai-rulez/skills.
+# ai-rulez generate --plugin fans it out to per-runtime bundles under plugin/ and the repo-root
+# marketplace index. Version tracks core via `mise run version:sync`. ~keep
+[tasks."plugin:generate"]
+description = "Regenerate the plugin bundles + marketplace from plugin/.ai-rulez"
+run = ["ai-rulez generate --plugin", "python3 scripts/sync_public_skills.py"]
+
+[tasks."plugin:verify"]
+description = "Verify generated plugin bundles match source (byte + BLAKE3 provenance)"
+run = ["ai-rulez verify --plugin", "python3 scripts/sync_public_skills.py --check"]
+
+[tasks."plugin:test"]
+description = "Check OpenCode v2 tools and packed Pi resources"
+run = [
+  "node --test scripts/tests/opencode-plugin.test.mjs",
+  "python3 scripts/verify_pi_package.py",
+  "python3 scripts/tests/test_verify_pi_package.py",
+]
+
+[tasks."plugin:hermes:test"]
+description = "Verify the Hermes bridge against a real MCP stdio fixture"
+run = "uv run --no-project --python 3.11 --with mcp==2.3.0 --with PyYAML==6.0.3 python scripts/tests/test_hermes_plugin.py"
+
+[tasks."plugin:skills:test"]
+description = "Verify public skill ownership and resource freshness"
+run = ["python3 scripts/tests/test_public_skills.py", "python3 scripts/sync_public_skills.py --check"]
+
+[tasks."plugin:launcher:test"]
+description = "Verify npm launcher preserves caller directory and relative configuration"
+run = "python3 scripts/tests/test_mcp_launcher_cwd.py"
+
+# ---- Versions and publishing -------------------------------------------------------------------
+
+[tasks."version:sync"]
+description = "Synchronize package, integration and plugin versions"
+run = [
+  "alef sync-versions",
+  # Integrations are versioned + published in lockstep with core (including rc); alef only syncs
+  # the alef-managed binding manifests, so sync integrations too. This also writes
+  # plugin/.ai-rulez/config.plugins.toml [plugin].version. ~keep
+  "python3 scripts/sync_integration_versions.py",
+  # Public skills must follow the same versioned resources as runtime bundles. ~keep
+  { task = "plugin:generate" },
+]
+
+[tasks."version:check"]
+description = "Check if versions are synchronized (dry-run)"
+run = [{ task = "version:show" }, "python3 scripts/sync_integration_versions.py --check"]
+
+[tasks."version:bump:major"]
+description = "Bump major version (X.0.0) and sync"
+run = ["alef sync-versions --bump major", { task = "version:sync" }]
+
+[tasks."version:bump:minor"]
+description = "Bump minor version (0.X.0) and sync"
+run = ["alef sync-versions --bump minor", { task = "version:sync" }]
+
+[tasks."version:bump:patch"]
+description = "Bump patch version (0.0.X) and sync"
+run = ["alef sync-versions --bump patch", { task = "version:sync" }]
+
+[tasks."version:set"]
+description = "Set explicit version and sync (usage: mise run version:set 4.10.0-rc.1)"
+usage = 'arg "<version>" help="The version to set, e.g. 4.10.0-rc.1"'
+run = ['alef sync-versions --set "$usage_version"', { task = "version:sync" }]
+
+[tasks."versions:sync"]
+description = "Synchronize version from Cargo.toml to all package manifests"
+run = [{ task = "version:sync" }]
+
+[tasks."publish:validate"]
+description = "Validate publish manifests are consistent"
+run = "alef publish validate"
+
+[tasks."publish:prepare"]
+description = "Prepare packages for publishing (vendor deps, stage FFI)"
+run = "alef publish prepare"
+
+[tasks."publish:build"]
+description = "Build release artifacts for all languages"
+run = "alef publish build"
+
+[tasks."publish:package"]
+description = "Package built artifacts into distributable archives"
+run = "alef publish package -o dist/"
+
+# ---- alef --------------------------------------------------------------------------------------
+
+[tasks."alef:generate"]
+description = "Regenerate all Alef-managed outputs (formatting via poly, no build or snippet validation)"
+run = [{ task = "dart:format:context" }, "alef all --clean --skip-compile --skip-snippet-validation"]
+
+[tasks."alef:verify"]
+description = "Check Alef-generated files are up to date"
+run = "alef verify --exit-code"
+
+[tasks."alef:build"]
+description = "Build all language bindings"
+run = "alef build"
+
+[tasks."alef:sync"]
+description = "Sync version from Cargo.toml to all manifests"
+run = "alef sync-versions"
+
+[tasks."alef:docs"]
+description = "Generate API reference documentation"
+run = "alef docs"
+
+[tasks."alef:verify:readme-paths"]
+description = "Check every alef.toml readme/docs path (templates, snippets) resolves on disk"
+run = "python3 scripts/ci/check-alef-readme-paths.py alef.toml"
+
+[tasks."alef:verify:ffi-formats"]
+description = "Check the native FFI build still selects every document format (GH#1387)"
+run = "python3 scripts/ci/check-ffi-format-features.py alef.toml"
+
+[tasks."alef:verify:fields"]
+description = "Check every tracked config field is named in every generated binding surface (GH#1745)"
+run = "python3 scripts/ci/check-binding-field-coverage.py"

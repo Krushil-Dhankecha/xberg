@@ -1,0 +1,169 @@
+# Rust core tasks, included from mise.toml [task_config]. ~keep
+
+["rust:check:tesseract-dynamic"]
+description = "Verify OCR links host Tesseract without touching the vendor cache"
+depends = ["os:require linux"]
+run = "bash scripts/ci/rust/check-tesseract-dynamic.sh"
+
+["rust:check:libheif-runtime"]
+description = "Verify real v1_19 Rust decoding against the selected system runtime"
+depends = ["os:require linux"]
+run = "bash scripts/ci/rust/check-libheif-runtime.sh"
+
+["rust:build:dev"]
+description = "Build all Rust crates in debug mode"
+run = [{ task = "rust:build", args = ["dev"] }]
+
+["rust:build:release"]
+description = "Build all Rust crates in release mode"
+run = [{ task = "rust:build", args = ["release"] }]
+
+["rust:build:ci"]
+description = "Build for CI with debug info enabled"
+run = [{ task = "rust:build", args = ["ci"] }]
+
+["rust:build:profiling"]
+description = "Build all Rust crates with profiling features (for flamegraph generation)"
+env = { ENABLE_PROFILING = "true", RUSTFLAGS = "-g" }
+run = [
+  "cargo build --locked --workspace --release --features full,profiling,api,mcp,otel --exclude xberg-php --exclude xberg-node --exclude xberg-wasm",
+  "cargo build --locked --manifest-path tools/benchmark-harness/Cargo.toml --release --features profiling",
+]
+
+["rust:cli:build"]
+description = "Build CLI binary"
+usage = 'flag "--target <triple>" env="TARGET" help="Cross-compile for this target triple"'
+run = 'cargo build --locked --release --package xberg-cli ${usage_target:+--target "$usage_target"}'
+
+["rust:cli:build:dev"]
+description = "Build CLI binary in debug mode"
+run = "cargo build --locked --package xberg-cli"
+
+["rust:cli:install"]
+description = "Install CLI binary"
+run = "cargo install --path crates/xberg-cli"
+
+# CARGO_ARGS is word-split on purpose: it carries extra cargo flags, as do trailing task args. ~keep
+["rust:ffi:build"]
+description = "Build FFI library for language bindings"
+run = "cargo build --locked --release --package xberg-ffi ${CARGO_ARGS:-}"
+
+["rust:ffi:build:dev"]
+description = "Build FFI library in debug mode"
+run = "cargo build --locked --package xberg-ffi ${CARGO_ARGS:-}"
+
+["rust:ffi:build:ci"]
+description = "Build FFI library in CI mode (with debug info)"
+env = { RUSTFLAGS = "-C debuginfo=2" }
+run = "cargo build --locked --release --package xberg-ffi ${CARGO_ARGS:-}"
+
+# The workspace `[profile.release]` targets native throughput (`opt-level = 3`); on wasm32 that
+# costs ~12 MB of `code` section and pushes the bundle over jsDelivr's 50 MiB per-file cap.
+# Mirrors the same override in .github/workflows/publish.yaml's build-wasm-package step so a local
+# build measures the artifact publish actually ships. ~keep
+["rust:wasm:build:all"]
+description = "Build all WASM targets (web/bundler/nodejs/deno) plus the TypeScript wrapper"
+dir = "{{config_root}}/crates/xberg-wasm"
+env = { CARGO_PROFILE_RELEASE_OPT_LEVEL = "z" }
+run = "pnpm run build:all"
+
+["rust:test"]
+description = "Run all Rust tests"
+depends = ["os:require linux darwin"]
+run = "bash scripts/ci/rust/run-unit-tests.sh"
+
+["rust:test:ci"]
+description = "Run Rust tests in CI mode with tessdata setup"
+depends = ["os:require linux darwin"]
+env = { CARGO_TERM_COLOR = "always" }
+run = 'RUST_BACKTRACE="${RUST_BACKTRACE:-1}" bash scripts/ci/rust/run-unit-tests.sh'
+
+["rust:test:email"]
+description = "Run library tests with only the email feature enabled"
+run = "cargo test --locked -p xberg --no-default-features --features email --lib"
+
+["rust:test:mime"]
+description = "Verify MIME declaration handling without tree-sitter"
+depends = ["os:require linux darwin"]
+run = "bash scripts/ci/rust/run-mime-tests.sh"
+
+["rust:test:vlm-auto-gate"]
+description = "Verify native VLM layout restoration without formula recognition"
+depends = ["os:require linux darwin"]
+run = "bash scripts/ci/rust/run-vlm-auto-gate-tests.sh"
+
+["rust:test:quick"]
+description = "Run fast Rust tests (unit tests only)"
+run = "cargo test --locked --lib --workspace --exclude xberg-php --exclude xberg-node --exclude xberg-wasm"
+
+["rust:lint"]
+description = "Lint Rust code WITH auto-fix (cargo fmt + cargo clippy --fix)"
+run = [
+  "cargo fmt --all",
+  "cargo clippy --workspace --fix --allow-dirty --allow-staged --exclude xberg-php --exclude xberg-node --exclude xberg-wasm",
+]
+
+["rust:lint:feature"]
+description = "Lint the library with one standalone feature enabled"
+usage = 'arg "<feature>" env="FEATURE" help="The single library feature to enable"'
+run = 'cargo clippy --locked -p xberg --lib --no-default-features --features "$usage_feature" -- -D warnings'
+
+["rust:lint:email"]
+description = "Lint all targets with only the email feature enabled"
+run = "cargo clippy --locked -p xberg --no-default-features --features email --all-targets -- -D warnings"
+
+["rust:lint:check"]
+description = "Lint Rust code WITHOUT auto-fix (check-only)"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --workspace --exclude xberg-php --exclude xberg-node --exclude xberg-wasm -- -D warnings",
+]
+
+["rust:format"]
+description = "Format Rust code (with modifications)"
+run = "cargo fmt --all"
+
+["rust:format:check"]
+description = "Check Rust formatting without modifications"
+run = "cargo fmt --all -- --check"
+
+["rust:licenses"]
+description = "Check Rust dependency licenses with cargo-deny"
+run = "cargo deny check licenses"
+
+["rust:doc"]
+description = "Generate Xberg library documentation and open it in the browser"
+run = "cargo doc -p xberg --lib --no-deps --open"
+
+["rust:doc:build"]
+description = "Build Xberg library documentation (without opening)"
+run = "cargo doc -p xberg --lib --no-deps"
+
+["rust:clean"]
+description = "Clean Rust build artifacts"
+run = "cargo clean"
+
+["rust:update"]
+description = "Update Rust dependencies (compatible only), incl. standalone sub-locks"
+run = [{ task = "deps:local", args = ["update", "rust"] }]
+
+["rust:upgrade"]
+description = "Upgrade Rust dependencies aggressively (cargo upgrade --incompatible), incl. sub-locks"
+run = [{ task = "deps:local", args = ["upgrade", "rust"] }]
+
+["rust:e2e:format"]
+description = "Format generated Rust E2E sources"
+run = "cargo fmt --manifest-path e2e/rust/Cargo.toml"
+
+["rust:e2e:lint"]
+description = "Lint Rust E2E crate with clippy"
+run = "cargo clippy --manifest-path e2e/rust/Cargo.toml -- -D warnings"
+
+["rust:e2e:test"]
+description = "Run Rust E2E tests"
+env = { RUST_TEST_THREADS = "1" }
+run = "cargo test --locked --manifest-path e2e/rust/Cargo.toml --release"
+
+["rust:check:mobile"]
+description = "cargo check Android + iOS mobile targets"
+run = [{ task = "rust:check:android" }, { task = "rust:check:ios" }]

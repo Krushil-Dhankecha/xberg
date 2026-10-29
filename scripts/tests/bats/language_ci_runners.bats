@@ -38,7 +38,7 @@ setup() {
 		'if [ "$1" = exec ]; then printf "jobs=%s backtrace=%s verbose=%s ld=%s\n" "$CARGO_BUILD_JOBS" "$RUST_BACKTRACE" "$RB_SYS_VERBOSE" "${LD_LIBRARY_PATH:-}" >>"$XBERG_TRACE"; fi' \
 		'exit "${BUNDLE_STATUS:-0}"'
 	xberg_stub gem 'printf "gem fixture\n"'
-	xberg_stub task 'printf "task %s\n" "$*" >>"$XBERG_TRACE"'
+	xberg_stub mise 'printf "mise %s\n" "$*" >>"$XBERG_TRACE"'
 	xberg_stub uname 'case "$1" in -s) printf "%s\n" "${TEST_OS:-Darwin}" ;; -m) printf "%s\n" "${TEST_ARCH:-arm64}" ;; esac'
 	cd "$REPO_ROOT" || return
 }
@@ -197,7 +197,7 @@ pnpm run check ld=$XBERG_WORK/pdfium/lib:"
 	xberg_assert_status 0
 	[ "$(grep -c '^cargo test ' "$XBERG_TRACE")" -eq 5 ]
 	grep -Fxq 'cargo clean -p xberg' "$XBERG_TRACE"
-	grep -Fxq 'task rust:clean' "$XBERG_TRACE"
+	grep -Fxq 'mise run rust:clean' "$XBERG_TRACE"
 	[ "$(grep -c '^live=1 stack=33554432 backtrace=full$' "$XBERG_WORK/cargo-env")" -eq 5 ]
 	grep -Fq -- '--features full,formula-recognition,bundle-tessdata-eng --all-targets --verbose' "$XBERG_TRACE"
 	grep -Fq -- '-p xberg-candle-ocr --features trocr,paddleocr-vl,glm-ocr,deepseek-ocr' "$XBERG_TRACE"
@@ -213,7 +213,7 @@ pnpm run check ld=$XBERG_WORK/pdfium/lib:"
 	grep -Fq -- '--features full-no-heic,heic,formula-recognition,bundle-tessdata-eng' "$XBERG_TRACE"
 	grep -Fq -- '--exclude xberg-ffi --exclude xberg-php --exclude xberg-dart --exclude xberg-swift' "$XBERG_TRACE"
 	grep -Fq -- '-p xberg-gliner --features ort-dynamic' "$XBERG_TRACE"
-	refute_trace_pattern '^task '
+	refute_trace_pattern '^mise '
 	refute_trace_pattern '-p xberg-candle-ocr'
 }
 
