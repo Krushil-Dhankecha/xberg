@@ -31,6 +31,14 @@ pub(crate) const OCR_AUTO_ROTATED_METADATA_KEY: &str = "auto_rotated";
 /// as `0.0` ("every word is valid"). See `dictionary_invalid_word_ratio` in
 /// `ocr::processor::execution` and `is_dictionary_invalid_noise` in `extractors::pdf::ocr`.
 pub(crate) const OCR_TESSERACT_DICT_INVALID_WORD_RATIO_METADATA_KEY: &str = "tesseract_dict_invalid_word_ratio";
+/// Whitespace tokens in the lines that Tesseract's confidence rule removed from the page.
+/// Written only when a line was removed. The page noise verdict adds the three counts back
+/// to the kept text, so a page is judged as the engine returned it (GH#2312).
+pub(crate) const OCR_PRUNED_WORDS_METADATA_KEY: &str = "ocr_pruned_words";
+/// Tokens with a letter among [`OCR_PRUNED_WORDS_METADATA_KEY`].
+pub(crate) const OCR_PRUNED_SCORABLE_WORDS_METADATA_KEY: &str = "ocr_pruned_scorable_words";
+/// Tokens with a letter and at most two bytes among [`OCR_PRUNED_WORDS_METADATA_KEY`].
+pub(crate) const OCR_PRUNED_SHORT_WORDS_METADATA_KEY: &str = "ocr_pruned_short_words";
 pub(crate) const OCR_IMAGE_PREPROCESSING_METADATA_KEY: &str = "image_preprocessing";
 /// One JSON object per OCR page with public elements, each carrying `page_number`,
 /// processed-raster `width`/`height`, `unit`, and `origin` (GH#1645). The document-wide

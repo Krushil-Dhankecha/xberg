@@ -908,3 +908,94 @@ fn should_not_reject_via_dictionary_signal_when_ratio_is_absent() {
         "no signal fired, so there must be no verdict"
     );
 }
+
+/// One hOCR paragraph: `real` lines of four dictionary words read at confidence 95, then
+/// `noise` lines of four one-character fragments read at confidence 20.
+#[cfg(feature = "ocr")]
+fn photo_noise_hocr(real: usize, noise: usize) -> String {
+    let word = |top: usize, left: usize, conf: u32, text: &str| {
+        format!(
+            r#"<span class="ocrx_word" title="bbox {left} {top} {} {}; x_wconf {conf}">{text}</span>"#,
+            left + 30,
+            top + 20
+        )
+    };
+    let mut lines = String::new();
+    for row in 0..real {
+        let words: String = ["alpha", "beta", "gamma", "delta"]
+            .iter()
+            .enumerate()
+            .map(|(i, w)| word(row * 30, i * 40, 95, w))
+            .collect();
+        lines.push_str(&format!(r#"<span class="ocr_line">{words}</span>"#));
+    }
+    for row in 0..noise {
+        let words: String = ["i", "l", "x", "v"]
+            .iter()
+            .enumerate()
+            .map(|(i, w)| word((real + row) * 30, i * 40, 20, w))
+            .collect();
+        lines.push_str(&format!(r#"<span class="ocr_line">{words}</span>"#));
+    }
+    format!(r#"<div class="ocr_page" title="ppageno 0"><p class="ocr_par">{lines}</p></div>"#)
+}
+
+/// The page verdict judges the page as the engine returned it, not the page after the
+/// confidence rule removed the noise lines (#2312, composing with #2311). The kept text alone
+/// is too short to be judged; the kept text plus the counts of the removed lines gives the
+/// same statistics as the unpruned text.
+#[cfg(feature = "ocr")]
+#[test]
+fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
+    use crate::ocr::hocr_parser::{
+        DictionaryLineFilter, RetainedWordConfidenceStats, parse_hocr_to_internal_document_with_page_offset_and_stats,
+    };
+    let hocr = photo_noise_hocr(2, 4);
+    let is_valid = |word: &str| Some(matches!(word, "alpha" | "beta" | "gamma" | "delta"));
+    let page_text = |floor: f64| {
+        let filter = DictionaryLineFilter {
+            is_valid_word: &is_valid,
+            max_invalid_ratio: 0.6,
+            min_line_confidence: floor,
+        };
+        let result = parse_hocr_to_internal_document_with_page_offset_and_stats(&hocr, Some(&filter), 1);
+        let text = result.document.elements.iter().map(|e| e.text.as_str()).collect::<Vec<_>>().join("\n\n");
+        (text, result.retained_word_confidence_stats)
+    };
+    let thresholds = OcrQualityThresholds::default();
+    let (unpruned_text, _): (String, RetainedWordConfidenceStats) = page_text(0.0);
+    let (kept_text, stats) = page_text(75.0);
+    let pruned = stats.pruned_words();
+    let counts = PrunedWordCounts {
+        words: pruned.words,
+        scorable: pruned.scorable,
+        short: pruned.short,
+    };
+
+    assert_eq!(counts.words, 16, "four removed lines of four fragments");
+    assert!(!kept_text.contains('x'), "the rule removed the noise lines: {kept_text}");
+
+    let oracle = ocr_output_stats(&unpruned_text, &thresholds);
+    let combined = ocr_output_stats_with_pruned(&kept_text, Some(&counts), &thresholds);
+    assert_eq!(combined.word_count, oracle.word_count);
+    assert_eq!(combined.fragmented_word_ratio, oracle.fragmented_word_ratio);
+
+    assert!(is_ocr_recognition_noise(&unpruned_text, &thresholds), "control: the unpruned page is noise");
+    assert!(
+        !is_ocr_recognition_noise(&kept_text, &thresholds),
+        "the kept text alone reads as clean"
+    );
+    let mut warnings = Vec::new();
+    let acceptance = accept_or_reject_ocr_page_counting_pruned(
+        0,
+        kept_text,
+        &thresholds,
+        &mut warnings,
+        None,
+        crate::plugins::ConfidenceSemantics::None,
+        None,
+        Some(&counts),
+    );
+    assert!(acceptance.verdict.is_some_and(|v| v.fragmented_noise));
+    assert_eq!(warnings.len(), 1);
+}

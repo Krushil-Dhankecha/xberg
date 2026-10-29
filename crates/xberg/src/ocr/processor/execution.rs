@@ -1507,6 +1507,19 @@ fn insert_retained_word_confidence_metadata(
     if let Some(p10) = stats.p10() {
         metadata.insert("p10_word_conf".to_string(), serde_json::Value::Number(p10.into()));
     }
+    let pruned = stats.pruned_words();
+    if pruned.words > 0 {
+        for (key, count) in [
+            (crate::ocr_metadata_keys::OCR_PRUNED_WORDS_METADATA_KEY, pruned.words),
+            (
+                crate::ocr_metadata_keys::OCR_PRUNED_SCORABLE_WORDS_METADATA_KEY,
+                pruned.scorable,
+            ),
+            (crate::ocr_metadata_keys::OCR_PRUNED_SHORT_WORDS_METADATA_KEY, pruned.short),
+        ] {
+            metadata.insert(key.to_string(), serde_json::Value::Number(count.into()));
+        }
+    }
 }
 
 fn retained_text_word_confidence_stats(
@@ -4532,6 +4545,70 @@ mod tests {
         let cache = OcrCache::new(Some(cache_dir.path().to_path_buf())).unwrap();
         process_image_with_cache(&corpus_image(image), &config, &cache, &TesseractApiPool::new(), None)
             .expect("OCR must succeed")
+    }
+
+    /// `english.png` under a band of seeded speckle, as a PNG. The speckle is invented content,
+    /// a stand-in for the texture of a photo that Tesseract reads as short fragments.
+    fn english_under_speckle_png() -> Vec<u8> {
+        use image::{GrayImage, ImageFormat, Luma};
+        use std::io::Cursor;
+
+        let text = image::load_from_memory(&corpus_image("english.png")).unwrap().to_luma8();
+        let band = 260u32;
+        let mut canvas = GrayImage::from_pixel(text.width(), text.height() + band, Luma([255]));
+        image::imageops::overlay(&mut canvas, &text, 0, i64::from(band));
+        let mut state = 0x2312u32;
+        let mut next = move || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state >> 8
+        };
+        for _ in 0..900 {
+            let (x, y) = (next() % (text.width() - 12), next() % (band - 12));
+            let (w, h) = (2 + next() % 7, 2 + next() % 7);
+            for dx in 0..w {
+                for dy in 0..h {
+                    canvas.put_pixel(x + dx, y + dy, Luma([next() as u8 % 90]));
+                }
+            }
+        }
+        let mut bytes = Vec::new();
+        canvas.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png).unwrap();
+        bytes
+    }
+
+    fn ocr_speckled_page(min_line_confidence: f64) -> OcrExtractionResult {
+        let config = TesseractConfig {
+            output_format: "markdown".to_string(),
+            enable_table_detection: false,
+            use_cache: false,
+            min_line_confidence,
+            ..TesseractConfig::default()
+        };
+        let cache_dir = tempdir().unwrap();
+        let cache = OcrCache::new(Some(cache_dir.path().to_path_buf())).unwrap();
+        process_image_with_cache(&english_under_speckle_png(), &config, &cache, &TesseractApiPool::new(), None)
+            .expect("OCR must succeed")
+    }
+
+    /// The page OCR applies the confidence rule at the configured floor (#2312): fragments read
+    /// from the speckle go, the sentence stays, and the removed words are reported for the page
+    /// verdict. With the floor at zero the same image keeps every line and reports nothing.
+    #[test]
+    #[serial]
+    fn page_ocr_removes_low_confidence_fragment_lines_at_the_configured_floor() {
+        let pruned_key = crate::ocr_metadata_keys::OCR_PRUNED_WORDS_METADATA_KEY;
+        let off = ocr_speckled_page(0.0);
+        let on = ocr_speckled_page(crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence);
+
+        assert!(on.content.contains("Thoroughly cook meat and eggs"), "kept: {:?}", on.content);
+        assert!(
+            !off.metadata.contains_key(pruned_key),
+            "control: a zero floor removes nothing: {:?}",
+            off.content
+        );
+        let pruned = on.metadata.get(pruned_key).and_then(serde_json::Value::as_u64);
+        assert!(pruned.is_some_and(|n| n > 0), "no line removed: {:?} / {:?}", on.content, off.content);
+        assert!(on.content.len() < off.content.len());
     }
 
     /// Lines OCR read in the secondary language of a `lang1+lang2` run must survive the

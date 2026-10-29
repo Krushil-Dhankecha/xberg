@@ -911,9 +911,10 @@ pub(super) fn ocr_recognition_noise_decision(
     thresholds: &OcrQualityThresholds,
     semantics: crate::plugins::ConfidenceSemantics,
     confidence: Option<f64>,
+    pruned: Option<&PrunedWordCounts>,
 ) -> OcrRecognitionNoiseDecision {
     let low_confidence = confidence_gate_rejects(semantics, confidence, thresholds.min_ocr_mean_confidence);
-    let fragmented_noise = is_ocr_recognition_noise(content, thresholds);
+    let fragmented_noise = recognition_noise_by_fragmentation(&ocr_output_stats_with_pruned(content, pruned, thresholds), thresholds);
     OcrRecognitionNoiseDecision {
         low_confidence,
         fragmented_noise,
@@ -984,14 +985,86 @@ pub(crate) fn page_ocr_confidence(
 /// scanned table becomes its most likely false positive.
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 pub(super) fn ocr_output_stats(text: &str, thresholds: &OcrQualityThresholds) -> NativeTextStats {
+    ocr_output_stats_with_pruned(text, None, thresholds)
+}
+
+/// Word counts of the lines that the Tesseract confidence rule removed from a page (#2312).
+///
+/// The page verdict must judge the text as the engine returned it, before the removal: a
+/// page whose noise lines were removed would otherwise read as clean prose, and a clean text
+/// layer would lose to it (#2311). The OCR layer cannot call this module, so it reports the
+/// counts of the removed lines and this module adds them to the counts of the kept text. The
+/// three counts follow the definitions in [`NativeTextStats::compute`]. ~keep
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PrunedWordCounts {
+    /// Whitespace-separated tokens.
+    pub(crate) words: usize,
+    /// Tokens with at least one alphabetic character.
+    pub(crate) scorable: usize,
+    /// Scorable tokens of at most two bytes.
+    pub(crate) short: usize,
+}
+
+/// Read the removed-line counts that `perform_ocr` writes. `None` when no line was removed.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(crate) fn pruned_word_counts_of(
+    metadata: &ahash::AHashMap<std::borrow::Cow<'_, str>, serde_json::Value>,
+) -> Option<PrunedWordCounts> {
+    let count = |key: &str| {
+        metadata
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+    };
+    Some(PrunedWordCounts {
+        words: count(crate::ocr_metadata_keys::OCR_PRUNED_WORDS_METADATA_KEY)?,
+        scorable: count(crate::ocr_metadata_keys::OCR_PRUNED_SCORABLE_WORDS_METADATA_KEY)?,
+        short: count(crate::ocr_metadata_keys::OCR_PRUNED_SHORT_WORDS_METADATA_KEY)?,
+    })
+}
+
+/// [`ocr_output_stats`] over the kept text plus the words of the removed lines.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(super) fn ocr_output_stats_with_pruned(
+    text: &str,
+    pruned: Option<&PrunedWordCounts>,
+    thresholds: &OcrQualityThresholds,
+) -> NativeTextStats {
     let normalized = normalize_markdown_for_scoring(text.trim());
     let scoring_input = if normalized.trim().is_empty() {
         text.trim()
     } else {
         normalized.as_str()
     };
-    NativeTextStats::compute(scoring_input, thresholds)
+    let mut stats = NativeTextStats::compute(scoring_input, thresholds);
+    let Some(pruned) = pruned else {
+        return stats;
+    };
+    let (mut scorable, mut short) = (0usize, 0usize);
+    for word in scoring_input.split_whitespace().filter(|w| w.chars().any(char::is_alphabetic)) {
+        scorable += 1;
+        if word.len() <= 2 {
+            short += 1;
+        }
+    }
+    scorable += pruned.scorable;
+    short += pruned.short;
+    stats.word_count += pruned.words;
+    stats.fragmented_word_ratio = if stats.word_count >= 10 && scorable > 0 {
+        short as f64 / scorable as f64
+    } else {
+        0.0
+    };
+    stats
 }
+
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+fn recognition_noise_by_fragmentation(stats: &NativeTextStats, thresholds: &OcrQualityThresholds) -> bool {
+    stats.word_count >= thresholds.min_words_for_ocr_output_check
+        && stats.fragmented_word_ratio >= thresholds.max_ocr_output_fragmented_word_ratio
+}
+
 /// Is this OCR result recognition noise rather than page content?
 ///
 /// An OCR engine run over line art — a scanned survey plat, an engineering drawing, the
@@ -1015,11 +1088,7 @@ pub(super) fn ocr_output_stats(text: &str, thresholds: &OcrQualityThresholds) ->
 /// at either edge.
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 pub(crate) fn is_ocr_recognition_noise(text: &str, thresholds: &OcrQualityThresholds) -> bool {
-    let stats = ocr_output_stats(text, thresholds);
-    if stats.word_count < thresholds.min_words_for_ocr_output_check {
-        return false;
-    }
-    stats.fragmented_word_ratio >= thresholds.max_ocr_output_fragmented_word_ratio
+    recognition_noise_by_fragmentation(&ocr_output_stats(text, thresholds), thresholds)
 }
 /// Whether a page's Tesseract dictionary-invalid-word ratio crosses the configured
 /// threshold, supplementing [`is_ocr_recognition_noise`] rather than replacing it.
@@ -1072,13 +1141,8 @@ pub(super) struct OcrPageAcceptance {
     pub(super) discarded: bool,
     pub(super) verdict: Option<OcrPageNoiseVerdict>,
 }
-/// Assess a page's OCR text, report suspected recognition noise, and optionally discard it.
-///
-/// The boolean verdict is destructive only when `discard_suspected_ocr_noise` is enabled.
-/// Blank pages carry neither a warning nor a destructive verdict, and `verdict` is `None`
-/// whenever no warning fires -- mirroring the `warnings` accumulator this function already
-/// writes into.
-#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+/// [`accept_or_reject_ocr_page_counting_pruned`] for a page with no removed lines.
+#[cfg(all(test, any(feature = "ocr", feature = "ocr-pipeline")))]
 pub(super) fn accept_or_reject_ocr_page(
     page_index: usize,
     content: String,
@@ -1088,6 +1152,35 @@ pub(super) fn accept_or_reject_ocr_page(
     confidence_semantics: crate::plugins::ConfidenceSemantics,
     confidence: Option<f64>,
 ) -> OcrPageAcceptance {
+    accept_or_reject_ocr_page_counting_pruned(
+        page_index,
+        content,
+        thresholds,
+        warnings,
+        dict_invalid_word_ratio,
+        confidence_semantics,
+        confidence,
+        None,
+    )
+}
+
+/// Assess a page's OCR text, report suspected recognition noise, and optionally discard it.
+///
+/// The boolean verdict is destructive only when `discard_suspected_ocr_noise` is enabled.
+/// Blank pages carry neither a warning nor a destructive verdict, and `verdict` is `None`
+/// whenever no warning fires -- mirroring the `warnings` accumulator this function already
+/// writes into.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(super) fn accept_or_reject_ocr_page_counting_pruned(
+    page_index: usize,
+    content: String,
+    thresholds: &OcrQualityThresholds,
+    warnings: &mut Vec<crate::types::ProcessingWarning>,
+    dict_invalid_word_ratio: Option<f64>,
+    confidence_semantics: crate::plugins::ConfidenceSemantics,
+    confidence: Option<f64>,
+    pruned: Option<&PrunedWordCounts>,
+) -> OcrPageAcceptance {
     if content.trim().is_empty() {
         return OcrPageAcceptance {
             content,
@@ -1095,7 +1188,7 @@ pub(super) fn accept_or_reject_ocr_page(
             verdict: None,
         };
     }
-    let recognition_noise = ocr_recognition_noise_decision(&content, thresholds, confidence_semantics, confidence);
+    let recognition_noise = ocr_recognition_noise_decision(&content, thresholds, confidence_semantics, confidence, pruned);
     let dictionary_noise = is_dictionary_invalid_noise(dict_invalid_word_ratio, thresholds);
     if !recognition_noise.suspected() && !dictionary_noise {
         return OcrPageAcceptance {
@@ -1105,7 +1198,7 @@ pub(super) fn accept_or_reject_ocr_page(
         };
     }
     let discarded = thresholds.discard_suspected_ocr_noise;
-    let stats = ocr_output_stats(&content, thresholds);
+    let stats = ocr_output_stats_with_pruned(&content, pruned, thresholds);
     tracing::warn!(
         page = page_index + 1,
         words = stats.word_count,

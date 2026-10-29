@@ -105,6 +105,17 @@ pub(crate) struct RetainedWordConfidenceStats {
     count: usize,
     sum: u64,
     low_confidence_count: usize,
+    pruned: PrunedWords,
+}
+
+/// Word counts of the lines that the confidence rule removed, in the terms of the page
+/// fragmentation check (whitespace tokens, tokens with a letter, letter tokens of at most
+/// two bytes). The page verdict adds them back to the kept text (#2312).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PrunedWords {
+    pub words: usize,
+    pub scorable: usize,
+    pub short: usize,
 }
 
 impl Default for RetainedWordConfidenceStats {
@@ -114,11 +125,29 @@ impl Default for RetainedWordConfidenceStats {
             count: 0,
             sum: 0,
             low_confidence_count: 0,
+            pruned: PrunedWords::default(),
         }
     }
 }
 
 impl RetainedWordConfidenceStats {
+    pub(crate) fn pruned_words(&self) -> PrunedWords {
+        self.pruned
+    }
+
+    fn record_pruned_line(&mut self, line: &HocrLineInfo) {
+        let text = line.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+        for token in text.split_whitespace() {
+            self.pruned.words += 1;
+            if token.chars().any(char::is_alphabetic) {
+                self.pruned.scorable += 1;
+                if token.len() <= 2 {
+                    self.pruned.short += 1;
+                }
+            }
+        }
+    }
+
     pub(crate) fn record(&mut self, confidence: f64) {
         if !confidence.is_finite() || !(0.0..=100.0).contains(&confidence) {
             return;
@@ -836,7 +865,13 @@ fn parse_paragraph(
 
     if let Some(filter) = dictionary_filter {
         let lines_before = lines.len();
-        lines.retain(|line| !is_low_confidence_noise_line(line, filter));
+        lines.retain(|line| {
+            let noise = is_low_confidence_noise_line(line, filter);
+            if noise {
+                retained_word_confidence_stats.record_pruned_line(line);
+            }
+            !noise
+        });
         let low_confidence_removed = lines_before - lines.len();
         if low_confidence_removed > 0 {
             removed_line_count += low_confidence_removed;
@@ -2557,6 +2592,13 @@ mod tests {
             );
             assert_eq!(with_rule.retained_word_confidence_stats.mean(), Some(55));
             assert_eq!(with_rule.retained_word_confidence_stats.low_confidence_word_count(), 4);
+            // The removed line "ii Il x": three tokens, each with a letter, each of one or two bytes.
+            let pruned = with_rule.retained_word_confidence_stats.pruned_words();
+            assert_eq!((pruned.words, pruned.scorable, pruned.short), (3, 3, 3));
+            assert_eq!(
+                without_rule.retained_word_confidence_stats.pruned_words(),
+                PrunedWords::default()
+            );
         }
 
         /// A threshold of zero turns the rule off, so a caller that sets

@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **(ocr): Tesseract removes photo-noise lines that hold no real word and a low confidence.**
+  A line with no dictionary word and a mean word confidence under `quality_thresholds.min_ocr_mean_confidence` (75 by default) is dropped from the page text, together with the lines the dictionary filter already drops. A line with any dictionary word stays. The page noise verdict still judges the page as the engine returned it. No new setting; set the threshold to 0 to keep every line. (GH#2312)
+
 - **(Rust): Update Crawlberg configuration types and error matching.**
   Exhaustive Crawlberg configuration literals need the new upstream fields; use `..Default::default()` where appropriate.
   `WafBlocked` matches must account for its added status and body fields. HTML conversion options retain their existing

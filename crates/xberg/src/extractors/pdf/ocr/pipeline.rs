@@ -66,9 +66,9 @@ use super::rendering::{
 };
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 use super::scoring::{
-    NativeTextStats, OcrPageNoiseVerdict, accept_or_reject_ocr_page, compute_quality_score, mean_text_conf_of,
-    ocr_content_is_repairable_prose, page_ocr_confidence, pipeline_stage_score, repair_ocr_list_markers,
-    repair_ocr_numeric_tokens, word_count_of,
+    NativeTextStats, OcrPageNoiseVerdict, accept_or_reject_ocr_page_counting_pruned, compute_quality_score,
+    mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence, pipeline_stage_score,
+    pruned_word_counts_of, repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
 };
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -890,6 +890,9 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
     // the per-page metadata is gone by the time `ocr_results` is judged.
     let mut page_mean_confidence: ahash::AHashMap<u32, f64> = ahash::AHashMap::new();
     let mut page_dictionary_invalid_word_ratio: ahash::AHashMap<u32, f64> = ahash::AHashMap::new();
+    // Words of the lines that Tesseract's confidence rule removed, per page: the verdict judges the
+    // page as the engine returned it (GH#2312, GH#2311). ~keep
+    let mut page_pruned_words: ahash::AHashMap<u32, super::scoring::PrunedWordCounts> = ahash::AHashMap::new();
     // Collected next to `page_mean_confidence` for the same reason: the per-page metadata is
     // gone by the time the summary attached to `PageContent.ocr_confidence` is built (#1568). ~keep
     let mut page_word_count: ahash::AHashMap<u32, u32> = ahash::AHashMap::new();
@@ -1536,6 +1539,9 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 {
                     page_dictionary_invalid_word_ratio.insert((page_idx + 1) as u32, ratio);
                 }
+                if let Some(pruned) = pruned_word_counts_of(&extraction_result.metadata.additional) {
+                    page_pruned_words.insert((page_idx + 1) as u32, pruned);
+                }
                 ocr_results.insert((page_idx + 1) as u32, extraction_result.content);
             }
         }
@@ -1671,6 +1677,9 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 {
                     page_dictionary_invalid_word_ratio.insert((*page_idx + 1) as u32, ratio);
                 }
+                if let Some(pruned) = pruned_word_counts_of(&extraction_result.metadata.additional) {
+                    page_pruned_words.insert((*page_idx + 1) as u32, pruned);
+                }
                 ocr_results.insert((*page_idx + 1) as u32, extraction_result.content);
             }
         }
@@ -1723,6 +1732,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                     page_mean_confidence.remove(&page_number);
                     page_word_count.remove(&page_number);
                     page_dictionary_invalid_word_ratio.remove(&page_number);
+                    page_pruned_words.remove(&page_number);
                     // The recovered tables print themselves beside these paragraphs (#2014).
                     structured_ocr_pages.insert(
                         page_number,
@@ -1829,6 +1839,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
         for (page_number, text) in &mut ocr_results {
             let confidence = page_mean_confidence.get(page_number).copied();
             let dictionary_ratio = page_dictionary_invalid_word_ratio.get(page_number).copied();
+            let pruned_words = page_pruned_words.get(page_number);
             tracing::debug!(page = *page_number, ?confidence, "OCR page mean confidence");
             // Recorded before the accept/reject call below, and never retracted afterwards: a
             // page the noise gate discards was still OCR'd, and its confidence is exactly the
@@ -1841,7 +1852,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
             ) {
                 ocr_confidence_by_page.insert(*page_number, summary);
             }
-            let acceptance = accept_or_reject_ocr_page(
+            let acceptance = accept_or_reject_ocr_page_counting_pruned(
                 (*page_number as usize).saturating_sub(1),
                 std::mem::take(text),
                 &ocr_output_thresholds,
@@ -1849,6 +1860,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 dictionary_ratio,
                 confidence_semantics,
                 confidence,
+                pruned_words,
             );
             *text = acceptance.content;
         }
@@ -3682,6 +3694,7 @@ pub(super) async fn extract_with_ocr_for_page(
                     .get(crate::ocr_metadata_keys::OCR_TESSERACT_DICT_INVALID_WORD_RATIO_METADATA_KEY)
                     .and_then(|v| v.as_f64());
                 let confidence = mean_text_conf_of(&ocr_result.metadata.additional);
+                let pruned_counts = pruned_word_counts_of(&ocr_result.metadata.additional);
                 if let Some(summary) = page_ocr_confidence(
                     backend_confidence_semantics,
                     confidence,
@@ -3700,11 +3713,14 @@ pub(super) async fn extract_with_ocr_for_page(
                         ocr_margin_filter_capability_warning(),
                     );
                 }
+                let margin_filtered_content_applied = margin_filtered_content.is_some();
                 #[cfg(feature = "pdf")]
                 let page_content = margin_filtered_content.unwrap_or(ocr_result.content);
                 #[cfg(not(feature = "pdf"))]
                 let page_content = ocr_result.content;
-                let acceptance = accept_or_reject_ocr_page(
+                // The page is judged as the engine returned it: the words of removed lines count (GH#2312).
+                let pruned_words = if margin_filtered_content_applied { None } else { pruned_counts };
+                let acceptance = accept_or_reject_ocr_page_counting_pruned(
                     document_page_idx,
                     page_content,
                     &ocr_output_thresholds,
@@ -3712,6 +3728,7 @@ pub(super) async fn extract_with_ocr_for_page(
                     dict_invalid_word_ratio,
                     backend_confidence_semantics,
                     confidence,
+                    pruned_words.as_ref(),
                 );
                 page_texts[page_idx] = acceptance.content;
                 rejected_pages[page_idx] = acceptance.discarded;
@@ -3767,6 +3784,7 @@ pub(super) async fn extract_with_ocr_for_page(
                 .get(crate::ocr_metadata_keys::OCR_TESSERACT_DICT_INVALID_WORD_RATIO_METADATA_KEY)
                 .and_then(|v| v.as_f64());
             let confidence = mean_text_conf_of(&ocr_result.metadata.additional);
+            let pruned_counts = pruned_word_counts_of(&ocr_result.metadata.additional);
             if let Some(summary) = page_ocr_confidence(
                 backend_confidence_semantics,
                 confidence,
@@ -3785,11 +3803,14 @@ pub(super) async fn extract_with_ocr_for_page(
                     ocr_margin_filter_capability_warning(),
                 );
             }
+            let margin_filtered_content_applied = margin_filtered_content.is_some();
             #[cfg(feature = "pdf")]
             let page_content = margin_filtered_content.unwrap_or(ocr_result.content);
             #[cfg(not(feature = "pdf"))]
             let page_content = ocr_result.content;
-            let acceptance = accept_or_reject_ocr_page(
+            // The page is judged as the engine returned it: the words of removed lines count (GH#2312).
+            let pruned_words = if margin_filtered_content_applied { None } else { pruned_counts };
+            let acceptance = accept_or_reject_ocr_page_counting_pruned(
                 document_page_idx,
                 page_content,
                 &ocr_output_thresholds,
@@ -3797,6 +3818,7 @@ pub(super) async fn extract_with_ocr_for_page(
                 dict_invalid_word_ratio,
                 backend_confidence_semantics,
                 confidence,
+                pruned_words.as_ref(),
             );
             page_texts[page_idx] = acceptance.content;
             rejected_pages[page_idx] = acceptance.discarded;
