@@ -209,3 +209,36 @@ STEP
 	xberg_assert_status 0
 	xberg_assert_output 'benchmark workflow build configuration is valid'
 }
+
+@test "benchmark workflow guard should reject a build after an equals-form env unset option" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: env --unset=RUSTFLAGS cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject an unsupported env option instead of ignoring a possible build" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: env --chdir=/tmp cargo build --release -p unrelated
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}
+
+@test "benchmark workflow guard should reject an unsupported env split string that can execute a build" {
+	cat >>cache-action.yml <<'STEP'
+    - name: Extra build
+      shell: bash
+      run: env --split-string="cargo build --release -p unrelated"
+STEP
+	run_validation
+	xberg_assert_status 1
+	xberg_assert_output_contains 'harness cache must build only the uploaded benchmark-harness binary'
+}

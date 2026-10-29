@@ -122,11 +122,19 @@ import sys
 
 def normalize(words):
     prefixes = {"if", "!", "then", "do", "else", "elif", "env", "exec", "command", "-i", "--ignore-environment", "--"}
+    environment = False
     while words:
-        if words[0] in {"-u", "--unset"}:
+        if words[0] == "env":
+            environment = True
+            words = words[1:]
+        elif environment and words[0].startswith("--unset="):
+            words = words[1:]
+        elif words[0] in {"-u", "--unset"}:
             words = words[2:]
         elif words[0] in prefixes or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
             words = words[1:]
+        elif environment and words[0].startswith("-"):
+            raise ValueError("unsupported env option in benchmark build command")
         else:
             break
     return words
