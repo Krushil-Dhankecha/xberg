@@ -21,6 +21,10 @@ run = [
 description = "Validate independent layout ground-truth preservation and identity checks"
 run = "uv run --no-sync python -m pytest -q tools/benchmark-harness/tests/test_import_omnidocbench.py"
 
+["benchmark:test"]
+description = "Run benchmark harness unit and integration tests"
+run = "cargo test --locked -p benchmark-harness"
+
 ["benchmark:local"]
 description = "Local head-to-head PDF benchmark: xberg vs liteparse (+docling if installed) with per-document gap report"
 run = "bash tools/benchmark-harness/scripts/bench_local.sh"
