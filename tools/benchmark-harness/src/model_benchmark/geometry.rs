@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use xberg::layout::LayoutClass;
 
 use super::{ExpectedDocument, ModelBenchmarkReport, benchmark_error, hash_bytes, hash_file};
+use crate::Result;
 use crate::corpus::CorpusDocument;
 use crate::quality::geometry::{self as metrics, GeometryMetrics, Page, Prediction};
-use crate::{Error, Result};
 
 #[path = "geometry/input.rs"]
 mod input;
