@@ -986,7 +986,7 @@ pub(crate) fn page_ocr_confidence(
 /// raw Markdown makes a page of perfectly good tabular OCR look exactly like line-art noise.
 /// [`compute_quality_score`] already normalizes for this (#1341); the veto has to as well, or a
 /// scanned table becomes its most likely false positive.
-#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+#[cfg(all(test, any(feature = "ocr", feature = "ocr-pipeline")))]
 pub(super) fn ocr_output_stats(text: &str, thresholds: &OcrQualityThresholds) -> NativeTextStats {
     ocr_output_stats_with_pruned(text, None, thresholds)
 }
@@ -1069,7 +1069,7 @@ fn recognition_noise_by_fragmentation(stats: &NativeTextStats, thresholds: &OcrQ
 /// This is deliberately conservative: it declines to judge pages with too few words to make
 /// the ratio meaningful, and its threshold sits in the middle of the measured gap rather than
 /// at either edge.
-#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+#[cfg(all(test, any(feature = "ocr", feature = "ocr-pipeline")))]
 pub(crate) fn is_ocr_recognition_noise(text: &str, thresholds: &OcrQualityThresholds) -> bool {
     recognition_noise_by_fragmentation(&ocr_output_stats(text, thresholds), thresholds)
 }
