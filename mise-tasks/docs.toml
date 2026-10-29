@@ -1,13 +1,5 @@
 # Documentation site and snippet tasks, included from mise.toml [task_config]. ~keep
 
-["docs:build"]
-description = "Build documentation"
-run = ["pnpm --dir docs-site install --frozen-lockfile", "pnpm --dir docs-site build"]
-
-["docs:serve"]
-description = "Serve documentation locally with live reload"
-run = ["pnpm --dir docs-site install", "pnpm --dir docs-site dev"]
-
 ["docs:verify:changelog"]
 description = "Check the docs-site changelog carries every release section from CHANGELOG.md"
 run = "python3 scripts/ci/check-changelog-sync.py"
@@ -15,14 +7,6 @@ run = "python3 scripts/ci/check-changelog-sync.py"
 ["docs:snippets:validate"]
 description = "Validate all snippet entries via alef"
 run = "alef snippets check"
-
-["docs:snippets:gaps"]
-description = "Report unreferenced snippets + missing language variants"
-run = "alef snippets gaps --snippets docs-site/src/snippets --docs docs-site/src/content/docs"
-
-["docs:snippets:audit"]
-description = "Audit snippet structure under docs-site/src/snippets"
-run = "alef snippets audit --snippets docs-site/src/snippets"
 
 # --strict fails the run when a language's validator reports Unavailable (or Skip/Downgraded)
 # instead of silently passing. Without it, a language whose toolchain isn't on the runner's PATH

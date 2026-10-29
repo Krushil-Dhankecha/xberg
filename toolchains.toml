@@ -1,1 +1,14 @@
-baseline = "v1.5.1"
+baseline = "v1.7.0"
+task_sets = [
+  "alef-bindings",
+  "alef-version",
+  "bats-lib",
+  "deps-refresh",
+  "docs-site",
+  "docs-snippets",
+  "governance",
+  "governance-check",
+  "lint-format",
+  "plugin",
+  "rust",
+]

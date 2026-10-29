@@ -88,12 +88,3 @@ run = [
   "cargo fmt --all -- --check",
   "cargo clippy --workspace --exclude xberg-php --exclude xberg-node --exclude xberg-wasm -- -D warnings",
 ]
-
-["rust:format"]
-description = "Format Rust code (with modifications)"
-run = "cargo fmt --all"
-
-["rust:clean"]
-description = "Clean Rust build artifacts"
-run = "cargo clean"
-

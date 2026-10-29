@@ -8,6 +8,7 @@ lockfile_platforms = ["linux-x64", "linux-arm64", "macos-arm64", "macos-x64", "w
 # that directory is named too. ~keep
 [task_config]
 includes = [
+  "mise-tasks/shared.toml",
   "mise-tasks",
   "mise-tasks/rust.toml",
   "mise-tasks/bindings.toml",
@@ -37,32 +38,20 @@ cargo-deny = "0.20.2"
 bats = "1.14.0"
 lychee = "0.24.2"
 
-[vars]
-# The xberg-io/actions revision the vendored Bats helper library was copied from. ~keep
-bats_lib_ref = "793d3a4d37a17009d91cce29f2825eda570d2abd"
-bench_fixtures = "tools/benchmark-harness/fixtures"
-
-# ---- Shared task bodies (xberg-io/toolchains, same tag as toolchains.toml) ---------------------
-
-[tasks."governance:hooks:install"]
-description = "Provision machine preferences and install reviewed AI governance hooks"
-file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.1/tasks/governance/hooks-install.sh"
-
-[tasks."version:show"]
-description = "Show current version from Cargo.toml"
-file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.1/tasks/version/cargo.sh"
-
+[env]
+BATS_LIB_REF = "{{vars.bats_lib_ref}}"
 # The ecosystems whose xberg bodies match the shared engine. rust, python, node, ruby, java and zig
 # carry repository specifics (extra locks, the parking_lot hold, the frozen bundle, mvn without a
 # wrapper, a build.zig.zon with no URL to refresh) and run through mise-tasks/deps/local.sh
 # instead. ~keep
-[tasks.deps]
-description = "Update or upgrade one ecosystem's dependencies, or every ecosystem"
-hide = true
-file = "https://raw.githubusercontent.com/xberg-io/toolchains/v1.5.1/tasks/deps/refresh.sh"
-env.DEPS_LANGS = "php go csharp elixir dart swift kotlin-android"
-env.DEPS_PHP_DIR = "."
-env.DEPS_CSHARP_DIR = "packages/csharp/Xberg"
+DEPS_LANGS = "php go csharp elixir dart swift kotlin-android"
+DEPS_PHP_DIR = "."
+DEPS_CSHARP_DIR = "packages/csharp/Xberg"
+
+[vars]
+# The xberg-io/actions revision the vendored Bats helper library was copied from. ~keep
+bats_lib_ref = "793d3a4d37a17009d91cce29f2825eda570d2abd"
+bench_fixtures = "tools/benchmark-harness/fixtures"
 
 # ---- Entry points ------------------------------------------------------------------------------
 
@@ -110,35 +99,9 @@ run = [{ task = "test" }, { task = "test:scripts" }, "alef test"]
 description = "Run the contract tests for the repo's own shell and PowerShell scripts"
 run = [{ task = "test:scripts:bats" }, { task = "test:scripts:pester" }]
 
-[tasks."test:scripts:lib:sync"]
-description = "Refresh the vendored Bats helper library from xberg-io/actions"
-env = { BATS_LIB_REF = "{{vars.bats_lib_ref}}" }
-run = "scripts/task/sync-bats-lib.sh sync"
-
-[tasks."test:scripts:lib:check"]
-description = "Fail when the vendored Bats helper library has drifted from its pinned source"
-env = { BATS_LIB_REF = "{{vars.bats_lib_ref}}" }
-run = "scripts/task/sync-bats-lib.sh --check"
-
-[tasks."test:bindings"]
-description = "Run binding test suites only (skip Rust core)"
-run = "alef test"
-
 [tasks."test:cov"]
 description = "Run all tests with coverage"
 run = [{ task = "rust:test:ci" }, "alef test --coverage"]
-
-[tasks.lint]
-description = "Lint all code via poly"
-run = "poly lint ."
-
-[tasks.format]
-description = "Format all code via poly"
-run = "poly fmt --fix ."
-
-[tasks."format:check"]
-description = "Check code formatting without modifications"
-run = "poly fmt --check ."
 
 [tasks.check]
 description = "Run all checks (format + lint, no modifications)"
@@ -224,22 +187,6 @@ run = "ai-rulez generate"
 description = "Validate the root AI governance configuration"
 run = "ai-rulez validate"
 
-[tasks."governance:check"]
-description = "Check materialized local governance outputs against shared sources"
-run = "ai-rulez generate --check --no-local --strict-config"
-
-# Coding-agent plugin (Claude Code, Cursor, Codex, Gemini, Kimi, OpenCode, Factory, Hermes, Pi).
-# Single source of truth: plugin/.ai-rulez/config.plugins.toml + plugin/.ai-rulez/skills.
-# ai-rulez generate --plugin fans it out to per-runtime bundles under plugin/ and the repo-root
-# marketplace index. Version tracks core via `mise run version:sync`. ~keep
-[tasks."plugin:generate"]
-description = "Regenerate the plugin bundles + marketplace from plugin/.ai-rulez"
-run = ["ai-rulez generate --plugin", "python3 scripts/sync_public_skills.py"]
-
-[tasks."plugin:verify"]
-description = "Verify generated plugin bundles match source (byte + BLAKE3 provenance)"
-run = ["ai-rulez verify --plugin", "python3 scripts/sync_public_skills.py --check"]
-
 [tasks."plugin:test"]
 description = "Check OpenCode v2 tools and packed Pi resources"
 run = [
@@ -247,10 +194,6 @@ run = [
   "python3 scripts/verify_pi_package.py",
   "python3 scripts/tests/test_verify_pi_package.py",
 ]
-
-[tasks."plugin:skills:test"]
-description = "Verify public skill ownership and resource freshness"
-run = ["python3 scripts/tests/test_public_skills.py", "python3 scripts/sync_public_skills.py --check"]
 
 # ---- Versions and publishing -------------------------------------------------------------------
 
@@ -270,18 +213,6 @@ run = [
 description = "Check if versions are synchronized (dry-run)"
 run = [{ task = "version:show" }, "python3 scripts/sync_integration_versions.py --check"]
 
-[tasks."version:bump:major"]
-description = "Bump major version (X.0.0) and sync"
-run = ["alef sync-versions --bump major", { task = "version:sync" }]
-
-[tasks."version:bump:minor"]
-description = "Bump minor version (0.X.0) and sync"
-run = ["alef sync-versions --bump minor", { task = "version:sync" }]
-
-[tasks."version:bump:patch"]
-description = "Bump patch version (0.0.X) and sync"
-run = ["alef sync-versions --bump patch", { task = "version:sync" }]
-
 [tasks."version:set"]
 description = "Set explicit version and sync (usage: mise run version:set 4.10.0-rc.1)"
 usage = 'arg "<version>" help="The version to set, e.g. 4.10.0-rc.1"'
@@ -296,10 +227,6 @@ run = [{ task = "dart:format:context" }, "alef all --clean --skip-compile --skip
 [tasks."alef:verify"]
 description = "Check Alef-generated files are up to date"
 run = "alef verify --exit-code"
-
-[tasks."alef:build"]
-description = "Build all language bindings"
-run = "alef build"
 
 [tasks."alef:sync"]
 description = "Sync version from Cargo.toml to all manifests"
