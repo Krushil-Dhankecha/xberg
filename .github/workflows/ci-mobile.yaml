@@ -54,7 +54,8 @@ jobs:
       - uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: ci-mobile-android-${{ matrix.abi }}
-          use-sccache: "true"
+          # GitHub cache startup returns HTTP 503 for x86_64; compile directly until the shared fallback ships. ~keep
+          use-sccache: ${{ matrix.abi != 'x86_64' }}
       - uses: xberg-io/actions/setup-android-ndk@v1
       - name: cargo ndk check xberg-dart
         run: cargo ndk --target ${{ matrix.abi }} --platform 21 -- check -p xberg-dart --no-default-features --features android-target
