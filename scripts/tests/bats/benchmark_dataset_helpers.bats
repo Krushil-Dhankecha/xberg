@@ -88,7 +88,7 @@ PY
 
 @test "dataset download should reject HTTP errors before downloading dataset subsets" {
 	export HTTP_ERROR=true
-	xberg_stub_trace huggingface-cli hf
+	xberg_stub huggingface-cli 'printf "hf %s\n" "$*" >>"$XBERG_TRACE"' 'mkdir -p "$XBERG_WORK/dataset/images" "$XBERG_WORK/dataset/ori_pdfs"'
 	run "$BASH" "$REPOSITORY_ROOT/tools/benchmark-harness/scripts/download_omnidocbench.sh" "$XBERG_WORK/dataset"
 	xberg_assert_status 22
 	run grep -q '^hf ' "$XBERG_TRACE"
