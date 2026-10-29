@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index f94de5a..8104756 100644
+index f94de5a..9c37a28 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -42,9 +42,9 @@ cfg_select! {
@@ -14,6 +14,15 @@ index f94de5a..8104756 100644
          use crate::unix::network_helper;
  
          #[cfg(test)]
+@@ -171,7 +171,7 @@ pub fn set_open_files_limit(mut _new_limit: usize) -> bool {
+             // If files are already open, to be sure that the number won't be bigger when those
+             // files are closed, we subtract the current number of opened files to the new
+             // limit.
+-            if remaining_files().fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
++            if remaining_files().try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                 let _new_limit = _new_limit as isize;
+                 let diff = (max as isize).saturating_sub(remaining);
+                 Some(_new_limit.saturating_sub(diff))
 diff --git a/src/unix/apple/mod.rs b/src/unix/apple/mod.rs
 index 5e189b0..6b27984 100644
 --- a/src/unix/apple/mod.rs
@@ -30,6 +39,19 @@ index 5e189b0..6b27984 100644
          pub mod network;
  
          pub(crate) use self::network::{NetworkDataInner, NetworksInner};
+diff --git a/src/unix/linux/process.rs b/src/unix/linux/process.rs
+index 8aa610f..4c0f329 100644
+--- a/src/unix/linux/process.rs
++++ b/src/unix/linux/process.rs
+@@ -1112,7 +1112,7 @@ struct FileCounter(File);
+ impl FileCounter {
+     fn new(f: File) -> Option<Self> {
+         let any_remaining =
+-            remaining_files().fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
++            remaining_files().try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                 if remaining > 0 {
+                     Some(remaining - 1)
+                 } else {
 diff --git a/src/unix/mod.rs b/src/unix/mod.rs
 index b418283..81c4e74 100644
 --- a/src/unix/mod.rs
