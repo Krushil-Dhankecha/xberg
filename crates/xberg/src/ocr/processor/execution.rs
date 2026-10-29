@@ -2130,11 +2130,13 @@ pub(super) fn perform_ocr(
             // Per-line dictionary-invalid noise filter (#783). Built here, immediately
             // before parsing, using `hocr_parser::DEFAULT_DICT_INVALID_LINE_RATIO` -- see
             // that constant's doc comment for why this is not yet a configurable
-            // `OcrQualityThresholds` field.
+            // `OcrQualityThresholds` field. The confidence floor next to it is not new config:
+            // it is `min_ocr_mean_confidence`, carried in `TesseractConfig::min_line_confidence`.
             let is_valid_word = |text: &str| dictionary.is_valid_word(text);
             let dictionary_filter = DictionaryLineFilter {
                 is_valid_word: &is_valid_word,
                 max_invalid_ratio: crate::ocr::hocr_parser::DEFAULT_DICT_INVALID_LINE_RATIO,
+                min_line_confidence: config.min_line_confidence,
             };
 
             let parse_result = parse_hocr_to_internal_document_with_page_offset_and_stats(
@@ -3136,6 +3138,7 @@ mod tests {
         let filter = DictionaryLineFilter {
             is_valid_word: &is_valid_word,
             max_invalid_ratio: crate::ocr::hocr_parser::DEFAULT_DICT_INVALID_LINE_RATIO,
+            min_line_confidence: 0.0,
         };
         let result = parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, Some(&filter), 1);
         let mut metadata = HashMap::new();
@@ -3236,6 +3239,7 @@ mod tests {
         let filter = DictionaryLineFilter {
             is_valid_word: &always_invalid,
             max_invalid_ratio: crate::ocr::hocr_parser::DEFAULT_DICT_INVALID_LINE_RATIO,
+            min_line_confidence: 0.0,
         };
         let result = parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, Some(&filter), 1);
         let mut metadata = HashMap::new();

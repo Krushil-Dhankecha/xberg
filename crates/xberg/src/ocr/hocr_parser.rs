@@ -475,6 +475,10 @@ pub(crate) struct DictionaryLineFilter<'a> {
     /// STRICTLY GREATER than this. See [`DEFAULT_DICT_INVALID_LINE_RATIO`] for how the
     /// default value was derived.
     pub max_invalid_ratio: f64,
+    /// A line with no dictionary word is dropped when the mean confidence of its words is
+    /// under this value (0-100). See [`is_low_confidence_noise_line`]. `0.0` turns the rule
+    /// off. In production this is `min_ocr_mean_confidence`, the threshold of the page verdict.
+    pub min_line_confidence: f64,
 }
 
 /// Minimum letters a word must have before a dictionary lookup on it is meaningful.
@@ -547,6 +551,39 @@ fn is_dictionary_noise_line(line: &HocrLineInfo, filter: &DictionaryLineFilter<'
         return false;
     }
     (invalid as f64 / candidates as f64) > filter.max_invalid_ratio
+}
+
+/// Whether a line is photo noise by confidence: no dictionary word, and a mean word
+/// confidence under [`DictionaryLineFilter::min_line_confidence`] (#2312).
+///
+/// The dictionary check in [`is_dictionary_noise_line`] cannot see a noise line that holds
+/// only one or two character fragments: it has no checkable word, so the line never reaches
+/// the ratio. The engine's own uncertainty does separate those lines from real text.
+///
+/// A line with any dictionary word is never dropped here, whatever its confidence: a real
+/// label that the engine read with doubt (a map label) stays. A line whose words carry no
+/// confidence value stays too, because nothing was measured.
+fn is_low_confidence_noise_line(line: &HocrLineInfo, filter: &DictionaryLineFilter<'_>) -> bool {
+    if filter.min_line_confidence <= 0.0 {
+        return false;
+    }
+    let mut confidence_sum = 0.0f64;
+    let mut confidence_count = 0usize;
+    for word in &line.words {
+        if let Some(confidence) = word.confidence.filter(|c| c.is_finite()) {
+            confidence_sum += confidence;
+            confidence_count += 1;
+        }
+    }
+    if confidence_count == 0 || confidence_sum / confidence_count as f64 >= filter.min_line_confidence {
+        return false;
+    }
+    !line.words.iter().any(|word| {
+        let text = word.text.trim();
+        text.chars().count() >= MIN_WORD_LEN_FOR_DICT_CHECK
+            && text.chars().all(|c| c.is_alphabetic())
+            && (filter.is_valid_word)(text) == Some(true)
+    })
 }
 
 /// Attribute key holding the paragraph's average word font size (points, as a
@@ -787,6 +824,31 @@ fn parse_paragraph(
         }
     }
 
+    // The page verdict reads these statistics. They are taken before the confidence rule
+    // below: that rule keeps only lines at or above `min_ocr_mean_confidence`, so statistics
+    // taken after it could never fall under the same threshold, and the page would lose its
+    // noise warning. ~keep
+    for word in lines.iter().flat_map(|line| line.words.iter()) {
+        if let Some(confidence) = word.confidence {
+            retained_word_confidence_stats.record(confidence);
+        }
+    }
+
+    if let Some(filter) = dictionary_filter {
+        let lines_before = lines.len();
+        lines.retain(|line| !is_low_confidence_noise_line(line, filter));
+        let low_confidence_removed = lines_before - lines.len();
+        if low_confidence_removed > 0 {
+            removed_line_count += low_confidence_removed;
+            tracing::debug!(
+                page,
+                low_confidence_removed,
+                min_line_confidence = filter.min_line_confidence,
+                "removed OCR line(s) with no real word and a low mean confidence"
+            );
+        }
+    }
+
     let all_words: Vec<&HocrWordInfo> = lines.iter().flat_map(|l| l.words.iter()).collect();
     if all_words.is_empty() {
         return (None, pos, removed_line_count);
@@ -821,7 +883,6 @@ fn parse_paragraph(
         if let Some(c) = word.confidence {
             conf_sum += c;
             conf_count += 1;
-            retained_word_confidence_stats.record(c);
         }
         if let Some(fs) = word.font_size {
             font_size_sum += fs;
@@ -2175,6 +2236,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &measured_is_valid_word,
                 max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence: 0.0,
             };
             let doc = parse_hocr_to_internal_document_with_dictionary_filter(ELEVATIONS_PAGE_HOCR, Some(&filter));
 
@@ -2209,6 +2271,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &measured_is_valid_word,
                 max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence: 0.0,
             };
 
             let result = parse_hocr_to_internal_document_with_page_offset_and_stats(&hocr, Some(&filter), 1);
@@ -2235,6 +2298,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &is_valid,
                 max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence: 0.0,
             };
 
             let unfiltered = parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, None, 1);
@@ -2271,6 +2335,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &always_invalid,
                 max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence: 0.0,
             };
 
             let unfiltered = parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, None, 1);
@@ -2304,6 +2369,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &always_invalid,
                 max_invalid_ratio: 0.0,
+                min_line_confidence: 0.0,
             };
 
             let doc = parse_hocr_to_internal_document_with_dictionary_filter(hocr, Some(&filter));
@@ -2337,6 +2403,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &is_valid,
                 max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence: 0.0,
             };
 
             let doc = parse_hocr_to_internal_document_with_dictionary_filter(hocr, Some(&filter));
@@ -2362,6 +2429,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &always_invalid,
                 max_invalid_ratio: 1.0,
+                min_line_confidence: 0.0,
             };
 
             let doc = parse_hocr_to_internal_document_with_dictionary_filter(hocr, Some(&filter));
@@ -2390,6 +2458,7 @@ mod tests {
             let filter = DictionaryLineFilter {
                 is_valid_word: &always_invalid,
                 max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence: 0.0,
             };
 
             let doc = parse_hocr_to_internal_document_with_dictionary_filter(hocr, Some(&filter));
@@ -2408,6 +2477,148 @@ mod tests {
             let doc = parse_hocr_to_internal_document(ELEVATIONS_PAGE_HOCR);
             assert_eq!(doc.elements.len(), 1);
             assert!(doc.elements[0].text.contains("OWATS DNDEVET OPMENT"));
+        }
+
+        /// One paragraph, five lines: a confident real line, a noise line of short fragments
+        /// at a low mean, a real label read with doubt, a fragment line at exactly the
+        /// threshold, and a fragment line whose words carry no confidence value.
+        const PHOTO_PAGE_HOCR: &str = r#"<div class="ocr_page" title="ppageno 0">
+            <p class="ocr_par">
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 10 100 40; x_wconf 96">CLEAR</span>
+                    <span class="ocrx_word" title="bbox 110 10 220 40; x_wconf 94">WORDS</span>
+                </span>
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 50 40 80; x_wconf 20">ii</span>
+                    <span class="ocrx_word" title="bbox 50 50 80 80; x_wconf 30">Il</span>
+                    <span class="ocrx_word" title="bbox 90 50 120 80; x_wconf 10">x</span>
+                </span>
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 90 100 120; x_wconf 60">Station</span>
+                    <span class="ocrx_word" title="bbox 110 90 200 120; x_wconf 40">Park</span>
+                </span>
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 130 40 160; x_wconf 75">ab</span>
+                    <span class="ocrx_word" title="bbox 50 130 80 160; x_wconf 75">cd</span>
+                </span>
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 170 40 200">zz</span>
+                    <span class="ocrx_word" title="bbox 50 170 80 200">qq</span>
+                </span>
+            </p>
+        </div>"#;
+
+        fn photo_page_is_valid_word(word: &str) -> Option<bool> {
+            Some(matches!(word, "CLEAR" | "WORDS" | "Station" | "Park"))
+        }
+
+        fn confidence_filter(min_line_confidence: f64) -> DictionaryLineFilter<'static> {
+            DictionaryLineFilter {
+                is_valid_word: &photo_page_is_valid_word,
+                max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence,
+            }
+        }
+
+        /// Only the line with no dictionary word and a mean under the threshold goes. The
+        /// real label read at a mean of 50 stays, the line exactly at 75 stays, and the line
+        /// with no confidence value stays. The count includes the removed line.
+        #[test]
+        fn removes_only_the_line_with_no_dictionary_word_and_a_low_mean() {
+            let filter = confidence_filter(75.0);
+
+            let result = parse_hocr_to_internal_document_with_page_offset_and_stats(PHOTO_PAGE_HOCR, Some(&filter), 1);
+
+            assert_eq!(
+                result.document.elements[0].text,
+                "CLEAR WORDS\nStation Park\nab cd\nzz qq"
+            );
+            assert_eq!(result.dictionary_filtered_line_count, 1);
+        }
+
+        /// The page verdict reads these statistics. The removed line must still count in
+        /// them, as it does with the rule off: otherwise the page could never fall under
+        /// the mean-confidence threshold again.
+        #[test]
+        fn confidence_statistics_see_the_line_that_the_confidence_rule_removes() {
+            let off = confidence_filter(0.0);
+            let on = confidence_filter(75.0);
+
+            let without_rule =
+                parse_hocr_to_internal_document_with_page_offset_and_stats(PHOTO_PAGE_HOCR, Some(&off), 1);
+            let with_rule = parse_hocr_to_internal_document_with_page_offset_and_stats(PHOTO_PAGE_HOCR, Some(&on), 1);
+
+            assert_eq!(without_rule.dictionary_filtered_line_count, 0);
+            assert_eq!(without_rule.retained_word_confidence_stats.word_count(), 9);
+            assert_eq!(with_rule.retained_word_confidence_stats.word_count(), 9);
+            assert_eq!(
+                with_rule.retained_word_confidence_stats.mean(),
+                without_rule.retained_word_confidence_stats.mean()
+            );
+            assert_eq!(with_rule.retained_word_confidence_stats.mean(), Some(55));
+            assert_eq!(with_rule.retained_word_confidence_stats.low_confidence_word_count(), 4);
+        }
+
+        /// A threshold of zero turns the rule off, so a caller that sets
+        /// `min_ocr_mean_confidence` to zero keeps every line.
+        #[test]
+        fn a_zero_threshold_keeps_every_line() {
+            let filter = confidence_filter(0.0);
+
+            let result = parse_hocr_to_internal_document_with_page_offset_and_stats(PHOTO_PAGE_HOCR, Some(&filter), 1);
+
+            assert_eq!(result.dictionary_filtered_line_count, 0);
+            assert!(result.document.elements[0].text.contains("ii Il x"));
+        }
+
+        /// The count is shared with the dictionary rule: one line goes by each rule.
+        #[test]
+        fn both_rules_count_into_one_removed_line_total() {
+            let hocr = PHOTO_PAGE_HOCR.replacen(
+                r#"<span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 90 100 120; x_wconf 60">Station</span>"#,
+                r#"<span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 82 100 88; x_wconf 90">OWATS</span>
+                    <span class="ocrx_word" title="bbox 110 82 220 88; x_wconf 90">DNDEVET</span>
+                </span>
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 90 100 120; x_wconf 60">Station</span>"#,
+                1,
+            );
+            let is_valid = |word: &str| Some(matches!(word, "CLEAR" | "WORDS" | "Station" | "Park"));
+            let filter = DictionaryLineFilter {
+                is_valid_word: &is_valid,
+                max_invalid_ratio: TEST_THRESHOLD,
+                min_line_confidence: 75.0,
+            };
+
+            let result = parse_hocr_to_internal_document_with_page_offset_and_stats(&hocr, Some(&filter), 1);
+
+            assert_eq!(result.dictionary_filtered_line_count, 2);
+            assert!(!result.document.elements[0].text.contains("OWATS"));
+            assert!(!result.document.elements[0].text.contains("ii Il x"));
+        }
+
+        /// A paragraph of only low-confidence fragments disappears, and its words still count
+        /// in the statistics.
+        #[test]
+        fn a_paragraph_of_only_low_confidence_fragments_produces_no_element() {
+            let hocr = r#"<div class="ocr_page" title="ppageno 0">
+                <p class="ocr_par">
+                    <span class="ocr_line">
+                        <span class="ocrx_word" title="bbox 10 10 40 40; x_wconf 20">ii</span>
+                        <span class="ocrx_word" title="bbox 50 10 80 40; x_wconf 30">Il</span>
+                    </span>
+                </p>
+            </div>"#;
+            let filter = confidence_filter(75.0);
+
+            let result = parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, Some(&filter), 1);
+
+            assert!(result.document.elements.is_empty());
+            assert_eq!(result.dictionary_filtered_line_count, 1);
+            assert_eq!(result.retained_word_confidence_stats.word_count(), 2);
+            assert_eq!(result.retained_word_confidence_stats.mean(), Some(25));
         }
     }
 }

@@ -7,7 +7,7 @@ use crate::ocr::error::OcrError;
 use crate::ocr::types::TesseractConfig;
 use xberg_tesseract::TesseractAPI;
 
-const TESSERACT_RESULT_SCHEMA_VERSION: u8 = 15;
+const TESSERACT_RESULT_SCHEMA_VERSION: u8 = 16;
 
 /// Compute a deterministic hash of the OCR configuration.
 ///
@@ -76,6 +76,7 @@ fn hash_config_for_schema(config: &TesseractConfig, resolved_tessdata_path: &str
     hasher.update(&config.psm.to_le_bytes());
     hasher.update(&config.oem.to_le_bytes());
     hasher.update(&config.min_confidence.to_bits().to_le_bytes());
+    hasher.update(&config.min_line_confidence.to_bits().to_le_bytes());
     hash_bytes(&mut hasher, config.output_format.as_bytes());
     hash_preprocessing(&mut hasher, config);
     hasher.update(&[config.enable_table_detection as u8]);
@@ -406,11 +407,13 @@ mod tests {
 
         // ~keep This pins the CURRENT version, and the number is meant to move: every bump has to
         // come here and be justified, which is what stops a change to the cached computation from
-        // silently reusing entries computed the old way. Version 15 honors the requested OCR
-        // engine mode during native initialization; older entries may contain output from
-        // automatic mode even when the caller explicitly requested a different engine.
+        // silently reusing entries computed the old way. Version 16 removes hOCR lines that have
+        // no real word and a low mean confidence; older entries still hold those lines. Version
+        // 15 honors the requested OCR engine mode during native initialization; older entries may
+        // contain output from automatic mode even when the caller explicitly requested a
+        // different engine.
         assert_eq!(
-            TESSERACT_RESULT_SCHEMA_VERSION, 15,
+            TESSERACT_RESULT_SCHEMA_VERSION, 16,
             "a bump must be deliberate: state here which change made an old entry wrong"
         );
         assert_ne!(
@@ -449,6 +452,20 @@ mod tests {
         let hash2 = hash_config(&config2, TEST_TESSDATA_PATH);
 
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_config_different_min_line_confidence() {
+        let mut config1 = create_test_config();
+        config1.min_line_confidence = 75.0;
+
+        let mut config2 = create_test_config();
+        config2.min_line_confidence = 0.0;
+
+        assert_ne!(
+            hash_config(&config1, TEST_TESSDATA_PATH),
+            hash_config(&config2, TEST_TESSDATA_PATH)
+        );
     }
 
     #[test]

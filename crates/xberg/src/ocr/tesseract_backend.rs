@@ -138,6 +138,11 @@ impl TesseractBackend {
         // channel from `OcrConfig` down to the decode, because `OcrBackend::process_image`
         // receives no `ExtractionConfig`. ~keep
         internal.security_limits = config.security_limits.clone();
+        // The line rule reads the page rule's threshold (#2312). Unset thresholds leave the
+        // default that `InternalTesseractConfig` already holds.
+        if let Some(thresholds) = config.quality_thresholds.as_ref() {
+            internal.min_line_confidence = thresholds.min_ocr_mean_confidence;
+        }
         internal.tessdata_path = config.tessdata_path.clone();
         internal.source_dpi = Self::source_dpi_from_backend_options(config);
         internal.known_full_page_scan = Self::known_full_page_scan_from_backend_options(config);
@@ -893,8 +898,8 @@ fn warnings_from_ocr_metadata(
             &mut warnings,
             "tesseract",
             format!(
-                "Tesseract removed {filtered_lines} OCR line(s) because their dictionary-checkable words were mostly \
-                 not real words"
+                "Tesseract removed {filtered_lines} OCR line(s) because their words were mostly not real words, or \
+                 had no real word and were read with low confidence"
             ),
         );
     }
@@ -1602,6 +1607,28 @@ mod tests {
         assert_eq!(tess_config.psm, InternalTesseractConfig::default().psm);
     }
 
+    /// The line rule reads the page rule's threshold. A threshold the caller sets reaches the
+    /// engine config; one that is unset leaves the page-level default.
+    #[test]
+    fn config_to_tesseract_carries_the_mean_confidence_threshold_to_the_line_rule() {
+        let backend = TesseractBackend::new();
+        let default_floor = crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence;
+
+        let unset = backend.config_to_tesseract(&OcrConfig::default());
+        assert_eq!(unset.min_line_confidence, default_floor);
+
+        let set = OcrConfig {
+            quality_thresholds: Some(crate::core::config::OcrQualityThresholds {
+                min_ocr_mean_confidence: 40.0,
+                ..Default::default()
+            }),
+            ..OcrConfig::default()
+        };
+        let carried = backend.config_to_tesseract(&set);
+        assert_eq!(carried.min_line_confidence, 40.0);
+        assert_ne!(carried.min_line_confidence, default_floor);
+    }
+
     #[test]
     fn test_config_to_tesseract_with_some() {
         let backend = TesseractBackend::new();
@@ -1917,7 +1944,8 @@ mod tests {
         assert_eq!(warnings[0].source, "tesseract");
         assert_eq!(
             warnings[0].message,
-            "Tesseract removed 2 OCR line(s) because their dictionary-checkable words were mostly not real words"
+            "Tesseract removed 2 OCR line(s) because their words were mostly not real words, or had no real word \
+             and were read with low confidence"
         );
     }
 

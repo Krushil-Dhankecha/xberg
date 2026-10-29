@@ -223,6 +223,21 @@ pub struct TesseractConfig {
     /// `None` means `SecurityLimits::default()`, never "disable the check". ~keep
     #[serde(skip)]
     pub security_limits: Option<crate::extractors::security::SecurityLimits>,
+
+    /// Mean word confidence (0-100) under which an hOCR line with no dictionary word is
+    /// removed from the page text. Carried from `OcrConfig::quality_thresholds`
+    /// (`min_ocr_mean_confidence`), the same number the page-level noise verdict reads, so
+    /// the page and the line judge a read against one threshold. `0.0` turns the rule off.
+    ///
+    /// Part of the OCR cache key: it changes the text that Tesseract produces. ~keep
+    #[serde(skip, default = "default_min_line_confidence")]
+    pub min_line_confidence: f64,
+}
+
+/// Default for [`TesseractConfig::min_line_confidence`]: the page-level default, so a caller
+/// that never sets `quality_thresholds` gets the same threshold at both grains.
+fn default_min_line_confidence() -> f64 {
+    crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence
 }
 
 /// Default for [`TesseractConfig::page_number`]: page 1, matching Tesseract's own
@@ -288,6 +303,7 @@ impl Default for TesseractConfig {
             known_full_page_scan: false,
             page_number: default_page_number(),
             security_limits: None,
+            min_line_confidence: default_min_line_confidence(),
         }
     }
 }
@@ -358,6 +374,7 @@ impl From<&crate::types::TesseractConfig> for TesseractConfig {
             // API can still set it explicitly.
             page_number: default_page_number(),
             security_limits: None,
+            min_line_confidence: default_min_line_confidence(),
         }
     }
 }
