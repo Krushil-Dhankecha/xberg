@@ -104,7 +104,8 @@ cp "${PHP_DIR}/package.xml" "${PKG_DIR}/" || echo "::warning::package.xml not fo
 
 # Copy README and LICENSE
 cp "${PHP_DIR}/README.md" "${PKG_DIR}/" || echo "::warning::README.md not found"
-cp "${PHP_DIR}/LICENSE" "${PKG_DIR}/" || echo "::warning::LICENSE not found"
+NOTICE_TOOL="$(cd "$(dirname "$0")/../../ci" && pwd)/package-notices.py"
+python3 "$NOTICE_TOOL" stage "$PKG_DIR"
 cp "${PHP_DIR}/CHANGELOG.md" "${PKG_DIR}/" || echo "::warning::CHANGELOG.md not found"
 
 cat >"${PKG_DIR}/pie.json" <<EOF
@@ -173,6 +174,8 @@ EOF
 TARBALL_NAME="${PKG_NAME}.tar.gz"
 echo "Creating tarball: ${TARBALL_NAME}"
 tar -czf "${OUTPUT_DIR}/${TARBALL_NAME}" -C "${OUTPUT_DIR}" "${PKG_NAME}"
+
+python3 "$NOTICE_TOOL" verify "${OUTPUT_DIR}/${TARBALL_NAME}" "$PKG_NAME"
 
 cd "${OUTPUT_DIR}"
 if command -v sha256sum &>/dev/null; then

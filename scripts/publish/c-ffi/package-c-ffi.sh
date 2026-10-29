@@ -113,8 +113,7 @@ if [[ "$platform_label" == windows-* ]]; then
   done
 fi
 
-# LICENSE
-cp "${repo_root}/LICENSE" "${stage_dir}/LICENSE"
+python3 "${repo_root}/scripts/ci/package-notices.py" stage "$stage_dir"
 
 cat >"${stage_dir}/lib/pkgconfig/xberg.pc" <<EOF
 prefix=/usr/local
@@ -161,5 +160,7 @@ EOF
 
 mkdir -p "$output_dir"
 tar -czf "${output_dir}/c-ffi-${platform_label}.tar.gz" -C "$output_dir" "${dist_name}/"
+
+python3 "${repo_root}/scripts/ci/package-notices.py" verify "${output_dir}/c-ffi-${platform_label}.tar.gz" "$dist_name"
 
 echo "Packaged: ${output_dir}/c-ffi-${platform_label}.tar.gz"

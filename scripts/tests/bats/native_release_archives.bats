@@ -5,8 +5,10 @@ setup() {
 	xberg_setup
 	REPOSITORY_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd -P)"
 	cd "$XBERG_WORK" || return
-	mkdir -p scripts target crates/xberg-ffi/include output
+	mkdir -p scripts/ci target crates/xberg-ffi/include output
 	cp "$REPOSITORY_ROOT/scripts/package_cli_artifact.sh" scripts/
+	cp "$REPOSITORY_ROOT/scripts/ci/package-notices.py" scripts/ci/
+	printf "third-party bytes\n" >THIRD_PARTY_LICENSES.md
 	printf 'license bytes\n' >LICENSE
 	printf 'usage bytes\n' >README.md
 	printf 'public header\n' >crates/xberg-ffi/include/xberg.h
@@ -49,10 +51,11 @@ setup() {
 	tar -xzf xberg-cli-selected-target.tar.gz -C extracted
 	xberg_assert_file extracted/xberg-cli-selected-target/xberg 'selected CLI'
 	xberg_assert_file extracted/xberg-cli-selected-target/LICENSE 'license bytes'
+	cmp THIRD_PARTY_LICENSES.md extracted/xberg-cli-selected-target/THIRD_PARTY_LICENSES.md
 	xberg_assert_file extracted/xberg-cli-selected-target/README.md 'usage bytes'
 	xberg_assert_file extracted/xberg-cli-selected-target/libpdfium.dylib 'mac PDFium'
 	xberg_assert_file extracted/xberg-cli-selected-target/libpdfium.so 'Linux PDFium'
-	[ "$(find extracted -type f | wc -l | tr -d '[:space:]')" -eq 5 ]
+	[ "$(find extracted -type f | wc -l | tr -d '[:space:]')" -eq 6 ]
 	[ ! -e xberg-cli-selected-target ]
 }
 
@@ -62,7 +65,7 @@ setup() {
 	printf 'environment CLI\n' >"target/$TARGET/release/xberg"
 	run "$BASH" "$XBERG_WORK/scripts/package_cli_artifact.sh"
 	xberg_assert_status 0
-	[ "$(tar -tzf xberg-cli-environment-target.tar.gz | grep -Ec '/[^/]+$')" -eq 3 ]
+	[ "$(tar -tzf xberg-cli-environment-target.tar.gz | grep -Ec '/[^/]+$')" -eq 4 ]
 }
 
 @test "CLI archive packaging should reject a missing target before creating staging directories" {
@@ -143,7 +146,9 @@ alef publish package --lang go --target $GO_TARGET --version 1.4.0 --output $XBE
 	xberg_assert_file extracted/xberg-go-v1.4.0-linux-x86_64-musl/lib/libxberg_ffi.so 'musl shared'
 	xberg_assert_file extracted/xberg-go-v1.4.0-linux-x86_64-musl/lib/libonnxruntime.so.1 'musl dependency'
 	xberg_assert_file extracted/xberg-go-v1.4.0-linux-x86_64-musl/include/xberg.h 'public header'
-	[ "$(find extracted -type f | wc -l | tr -d '[:space:]')" -eq 3 ]
+	cmp "$REPOSITORY_ROOT/LICENSE" extracted/xberg-go-v1.4.0-linux-x86_64-musl/LICENSE
+	cmp "$REPOSITORY_ROOT/THIRD_PARTY_LICENSES.md" extracted/xberg-go-v1.4.0-linux-x86_64-musl/THIRD_PARTY_LICENSES.md
+	[ "$(find extracted -type f | wc -l | tr -d '[:space:]')" -eq 5 ]
 	[ ! -e output/xberg-go-v1.4.0-linux-x86_64-musl ]
 }
 

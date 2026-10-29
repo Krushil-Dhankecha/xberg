@@ -5,8 +5,10 @@ setup() {
 	xberg_setup
 	REPOSITORY_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd -P)"
 	cd "$XBERG_WORK" || return
-	mkdir -p scripts/publish/c-ffi crates/xberg-ffi/include crates/xberg-ffi/cmake target/release
+	mkdir -p scripts/ci scripts/publish/c-ffi crates/xberg-ffi/include crates/xberg-ffi/cmake target/release
 	cp "$REPOSITORY_ROOT/scripts/publish/c-ffi/package-c-ffi.sh" scripts/publish/c-ffi/
+	cp "$REPOSITORY_ROOT/scripts/ci/package-notices.py" scripts/ci/
+	printf "third-party notice bytes\n" >THIRD_PARTY_LICENSES.md
 	printf 'public C header\n' >crates/xberg-ffi/include/xberg.h
 	printf 'CMake imported target\n' >crates/xberg-ffi/cmake/xberg-ffi-config.cmake
 	printf 'MIT license bytes\n' >LICENSE
@@ -21,6 +23,7 @@ unpack_archive() {
 	export PACKAGE_ROOT="$XBERG_WORK/extracted/xberg-ffi-1.4.2-$platform"
 	xberg_assert_file "$PACKAGE_ROOT/include/xberg.h" 'public C header'
 	xberg_assert_file "$PACKAGE_ROOT/LICENSE" 'MIT license bytes'
+	cmp THIRD_PARTY_LICENSES.md "$PACKAGE_ROOT/THIRD_PARTY_LICENSES.md"
 	xberg_assert_file "$PACKAGE_ROOT/cmake/xberg-ffi-config.cmake" 'CMake imported target'
 	grep -Fxq 'Version: 1.4.2' "$PACKAGE_ROOT/lib/pkgconfig/xberg.pc"
 	grep -Fxq 'set(PACKAGE_VERSION_MAJOR 1)' "$PACKAGE_ROOT/cmake/xberg-ffi-config-version.cmake"
@@ -38,7 +41,7 @@ unpack_archive() {
 	xberg_assert_file "$PACKAGE_ROOT/lib/libxberg_ffi.so" 'Linux shared library'
 	xberg_assert_file "$PACKAGE_ROOT/lib/libxberg_ffi.a" 'Linux static library'
 	grep -Fxq 'Libs.private: -lpthread -ldl -lm' "$PACKAGE_ROOT/lib/pkgconfig/xberg.pc"
-	[ "$(find "$PACKAGE_ROOT" -type f | wc -l | tr -d '[:space:]')" -eq 7 ]
+	[ "$(find "$PACKAGE_ROOT" -type f | wc -l | tr -d '[:space:]')" -eq 8 ]
 }
 
 @test "C FFI packager should prefer target-specific macOS libraries and preserve explicit features" {
@@ -55,7 +58,7 @@ unpack_archive() {
 	xberg_assert_file "$PACKAGE_ROOT/lib/libxberg_ffi.dylib" 'selected macOS shared'
 	xberg_assert_file "$PACKAGE_ROOT/lib/libxberg_ffi.a" 'selected macOS static'
 	grep -Fxq 'Libs.private: -framework CoreFoundation -framework Security -lpthread' "$PACKAGE_ROOT/lib/pkgconfig/xberg.pc"
-	[ "$(find "$PACKAGE_ROOT" -type f | wc -l | tr -d '[:space:]')" -eq 7 ]
+	[ "$(find "$PACKAGE_ROOT" -type f | wc -l | tr -d '[:space:]')" -eq 8 ]
 }
 
 @test "C FFI packager should fall back to GNU Windows artifact aliases and normalize the import library name" {
@@ -70,7 +73,7 @@ unpack_archive() {
 	xberg_assert_file "$PACKAGE_ROOT/lib/libxberg_ffi.a" 'GNU static library'
 	xberg_assert_file "$PACKAGE_ROOT/lib/xberg_ffi.dll.lib" 'GNU import library'
 	grep -Fxq 'Libs.private: -lws2_32 -luserenv -lbcrypt' "$PACKAGE_ROOT/lib/pkgconfig/xberg.pc"
-	[ "$(find "$PACKAGE_ROOT" -type f | wc -l | tr -d '[:space:]')" -eq 8 ]
+	[ "$(find "$PACKAGE_ROOT" -type f | wc -l | tr -d '[:space:]')" -eq 9 ]
 }
 
 @test "C FFI packager should reject unsupported platforms before building" {

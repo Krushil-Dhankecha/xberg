@@ -28,7 +28,9 @@ write_platform() {
 		tar -xzf "node-bindings-$target.tar.gz" -C unpacked
 		xberg_assert_file "unpacked/$platform/$binary" "$platform binary"
 		xberg_assert_file "unpacked/$platform/$pdfium" "$platform pdfium"
-		[ "$(find unpacked -type f | wc -l | tr -d '[:space:]')" -eq 3 ]
+		cmp "$REPOSITORY_ROOT/LICENSE" "unpacked/$platform/LICENSE"
+		cmp "$REPOSITORY_ROOT/THIRD_PARTY_LICENSES.md" "unpacked/$platform/THIRD_PARTY_LICENSES.md"
+		[ "$(find unpacked -type f | wc -l | tr -d '[:space:]')" -eq 5 ]
 		[ "$(jq -r --arg f "$pdfium" '[.files[] | select(. == $f)] | length' "unpacked/$platform/package.json")" -eq 1 ]
 		rm -r unpacked
 	done <<'TARGETS'

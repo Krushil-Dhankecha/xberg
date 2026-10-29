@@ -90,7 +90,9 @@ PY
 	mkdir extracted
 	tar -xzf output/xberg-1.4.0-linux-x86_64.tar.gz -C extracted
 	xberg_assert_file extracted/xberg-1.4.0-linux-x86_64/ext/libxberg_php.so 'Linux extension bytes'
-	[ "$(find extracted -type f | wc -l | tr -d '[:space:]')" -eq 8 ]
+	cmp "$REPOSITORY_ROOT/LICENSE" extracted/xberg-1.4.0-linux-x86_64/LICENSE
+	cmp "$REPOSITORY_ROOT/THIRD_PARTY_LICENSES.md" extracted/xberg-1.4.0-linux-x86_64/THIRD_PARTY_LICENSES.md
+	[ "$(find extracted -type f | wc -l | tr -d '[:space:]')" -eq 9 ]
 	python3 - <<'PY'
 from pathlib import Path
 import hashlib,json
