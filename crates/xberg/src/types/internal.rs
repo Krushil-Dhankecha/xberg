@@ -370,6 +370,24 @@ pub struct InternalDocument {
     #[serde(skip)]
     #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
     pub ocr_text_claimed_by_tables: bool,
+
+    /// Word counts of the hOCR lines that the confidence rule removed from this page (#2312).
+    /// The page noise verdict adds them back to the kept text, so it judges the page as the
+    /// engine returned it. Never crosses the plugin-bridge JSON wire format and never reaches
+    /// the public output.
+    #[serde(skip)]
+    #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+    pub(crate) ocr_pruned_words: OcrPrunedWords,
+}
+
+/// Word counts of OCR lines removed from a page, in the terms of the page fragmentation check:
+/// whitespace tokens, tokens with a letter, and letter tokens of at most two bytes.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct OcrPrunedWords {
+    pub(crate) words: usize,
+    pub(crate) scorable: usize,
+    pub(crate) short: usize,
 }
 
 impl From<crate::types::extraction::ExtractedDocument> for InternalDocument {
@@ -462,6 +480,8 @@ impl InternalDocument {
             ocr_coordinate_frame: None,
             #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
             ocr_text_claimed_by_tables: false,
+            #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+            ocr_pruned_words: OcrPrunedWords::default(),
         }
     }
 

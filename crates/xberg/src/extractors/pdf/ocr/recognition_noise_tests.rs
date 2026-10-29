@@ -965,12 +965,7 @@ fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
     let thresholds = OcrQualityThresholds::default();
     let (unpruned_text, _): (String, RetainedWordConfidenceStats) = page_text(0.0);
     let (kept_text, stats) = page_text(75.0);
-    let pruned = stats.pruned_words();
-    let counts = PrunedWordCounts {
-        words: pruned.words,
-        scorable: pruned.scorable,
-        short: pruned.short,
-    };
+    let counts = stats.pruned_words();
 
     assert_eq!(counts.words, 16, "four removed lines of four fragments");
     assert!(!kept_text.contains('x'), "the rule removed the noise lines: {kept_text}");
@@ -998,4 +993,123 @@ fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
     );
     assert!(acceptance.verdict.is_some_and(|v| v.fragmented_noise));
     assert_eq!(warnings.len(), 1);
+}
+
+/// A backend that returns a short clean text and reports the words of lines it removed from the
+/// page, as Tesseract does when its confidence rule fires (#2312).
+#[cfg(feature = "pdf")]
+struct PrunedLinesBackend {
+    name: &'static str,
+    removed: crate::types::internal::OcrPrunedWords,
+}
+
+#[cfg(feature = "pdf")]
+impl crate::plugins::Plugin for PrunedLinesBackend {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn version(&self) -> String {
+        "1.0.0".to_string()
+    }
+    fn initialize(&self) -> crate::Result<()> {
+        Ok(())
+    }
+    fn shutdown(&self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "pdf")]
+#[async_trait::async_trait]
+impl crate::plugins::OcrBackend for PrunedLinesBackend {
+    async fn process_image(
+        &self,
+        _image_bytes: &[u8],
+        _config: &crate::core::config::OcrConfig,
+    ) -> crate::Result<crate::ExtractedDocument> {
+        Ok(crate::ExtractedDocument {
+            content: "Alpha bravo charlie delta echo".to_string(),
+            mime_type: std::borrow::Cow::Borrowed("text/plain"),
+            ocr_internal_document: Some(crate::types::internal::InternalDocument {
+                ocr_pruned_words: self.removed,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
+    fn supports_language(&self, _language: &str) -> bool {
+        true
+    }
+    fn backend_type(&self) -> crate::plugins::OcrBackendType {
+        crate::plugins::OcrBackendType::Custom
+    }
+}
+
+/// Text of the one scanned page after the noise verdict, with discard on, for a backend that
+/// reports `removed` words in the lines it took out.
+#[cfg(feature = "pdf")]
+async fn scanned_page_text_with_removed_lines(
+    name: &'static str,
+    removed: crate::types::internal::OcrPrunedWords,
+) -> String {
+    use crate::core::config::{ExtractInput, ExtractionConfig, OcrConfig};
+
+    let _ = crate::plugins::unregister_ocr_backend(name);
+    crate::plugins::register_ocr_backend(std::sync::Arc::new(PrunedLinesBackend { name, removed }))
+        .expect("the stub backend must register");
+    let config = ExtractionConfig {
+        ocr: Some(OcrConfig {
+            backend: name.to_string(),
+            quality_thresholds: Some(OcrQualityThresholds {
+                discard_suspected_ocr_noise: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let bytes = std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ocr/scanned_hello.pdf"),
+    )
+    .expect("fixture must exist");
+    let result = crate::extract(
+        ExtractInput::from_bytes(bytes, "application/pdf", Some("scanned_hello.pdf".to_string())),
+        &config,
+    )
+    .await;
+    let _ = crate::plugins::unregister_ocr_backend(name);
+    result
+        .expect("extraction must succeed")
+        .results
+        .first()
+        .expect("one document")
+        .content
+        .clone()
+}
+
+/// The page verdict of a scanned PDF counts the lines the engine removed: five clean words
+/// beside twenty removed fragments make a noise page, so the discard setting drops its text.
+/// With nothing removed the same five words pass. Removing the counts from the verdict call of
+/// the page route turns the first assertion red. ~keep
+#[cfg(feature = "pdf")]
+#[tokio::test]
+async fn the_page_verdict_of_a_scanned_pdf_counts_the_lines_the_engine_removed() {
+    let fragments = crate::types::internal::OcrPrunedWords {
+        words: 20,
+        scorable: 20,
+        short: 20,
+    };
+    let none = crate::types::internal::OcrPrunedWords::default();
+
+    let kept_without_removed_lines = scanned_page_text_with_removed_lines("gh2312-no-removed-lines", none).await;
+    let with_removed_lines = scanned_page_text_with_removed_lines("gh2312-removed-lines", fragments).await;
+
+    assert!(
+        kept_without_removed_lines.contains("Alpha bravo"),
+        "control: five clean words pass the verdict: {kept_without_removed_lines:?}"
+    );
+    assert!(
+        !with_removed_lines.contains("Alpha bravo"),
+        "the removed fragments count against the page: {with_removed_lines:?}"
+    );
 }

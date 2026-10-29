@@ -1507,19 +1507,6 @@ fn insert_retained_word_confidence_metadata(
     if let Some(p10) = stats.p10() {
         metadata.insert("p10_word_conf".to_string(), serde_json::Value::Number(p10.into()));
     }
-    let pruned = stats.pruned_words();
-    if pruned.words > 0 {
-        for (key, count) in [
-            (crate::ocr_metadata_keys::OCR_PRUNED_WORDS_METADATA_KEY, pruned.words),
-            (
-                crate::ocr_metadata_keys::OCR_PRUNED_SCORABLE_WORDS_METADATA_KEY,
-                pruned.scorable,
-            ),
-            (crate::ocr_metadata_keys::OCR_PRUNED_SHORT_WORDS_METADATA_KEY, pruned.short),
-        ] {
-            metadata.insert(key.to_string(), serde_json::Value::Number(count.into()));
-        }
-    }
 }
 
 fn retained_text_word_confidence_stats(
@@ -2159,8 +2146,12 @@ pub(super) fn perform_ocr(
             );
             dictionary_filtered_line_count = parse_result.dictionary_filtered_line_count;
             let content = flatten_hocr_elements_to_text(&parse_result.document.elements);
+            // The removed lines' word counts travel on the document, not in the metadata: they
+            // are for the page verdict and must not reach the public output (#2312).
+            let mut document = parse_result.document;
+            document.ocr_pruned_words = parse_result.retained_word_confidence_stats.pruned_words();
             retained_hocr_confidence_stats = Some(parse_result.retained_word_confidence_stats);
-            hocr_document = Some(parse_result.document);
+            hocr_document = Some(document);
 
             let mime_type = extraction_config
                 .map(|c| match c.output_format {
@@ -4591,24 +4582,39 @@ mod tests {
     }
 
     /// The page OCR applies the confidence rule at the configured floor (#2312): fragments read
-    /// from the speckle go, the sentence stays, and the removed words are reported for the page
-    /// verdict. With the floor at zero the same image keeps every line and reports nothing.
+    /// from the speckle go, the sentence stays, and the words of the removed lines travel on the
+    /// structured document for the page verdict. With the floor at zero the same image keeps
+    /// every line and reports nothing. The public metadata holds the same keys either way.
     #[test]
     #[serial]
     fn page_ocr_removes_low_confidence_fragment_lines_at_the_configured_floor() {
-        let pruned_key = crate::ocr_metadata_keys::OCR_PRUNED_WORDS_METADATA_KEY;
         let off = ocr_speckled_page(0.0);
         let on = ocr_speckled_page(crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence);
 
         assert!(on.content.contains("Thoroughly cook meat and eggs"), "kept: {:?}", on.content);
-        assert!(
-            !off.metadata.contains_key(pruned_key),
+        let removed = |result: &OcrExtractionResult| {
+            result
+                .internal_document
+                .as_ref()
+                .expect("the hOCR route returns its document")
+                .ocr_pruned_words
+        };
+        assert_eq!(
+            removed(&off),
+            crate::types::internal::OcrPrunedWords::default(),
             "control: a zero floor removes nothing: {:?}",
             off.content
         );
-        let pruned = on.metadata.get(pruned_key).and_then(serde_json::Value::as_u64);
-        assert!(pruned.is_some_and(|n| n > 0), "no line removed: {:?} / {:?}", on.content, off.content);
+        assert!(removed(&on).words > 0, "no line removed: {:?} / {:?}", on.content, off.content);
         assert!(on.content.len() < off.content.len());
+
+        let mut off_keys: Vec<_> = off.metadata.keys().collect();
+        let mut on_keys: Vec<_> = on.metadata.keys().collect();
+        off_keys.sort();
+        on_keys.sort();
+        assert_eq!(on_keys, off_keys, "the removed-word counts must not add a public metadata key");
+        let serialized = serde_json::to_string(&on).unwrap();
+        assert!(!serialized.contains("pruned"), "public output: {serialized}");
     }
 
     /// Lines OCR read in the secondary language of a `lang1+lang2` run must survive the

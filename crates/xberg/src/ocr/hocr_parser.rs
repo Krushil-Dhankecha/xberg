@@ -20,7 +20,7 @@ use memchr::memchr;
 
 use crate::ocr::table::tsv_parser::text_without_underscore_marks;
 use crate::types::extraction::BoundingBox;
-use crate::types::internal::{ElementKind, InternalDocument, InternalElement};
+use crate::types::internal::{ElementKind, InternalDocument, InternalElement, OcrPrunedWords};
 use crate::types::ocr_elements::{OcrBoundingGeometry, OcrConfidence, OcrElementLevel};
 
 /// Attribute used to retain the logical hOCR block enclosing an `ocr_par`.
@@ -105,17 +105,7 @@ pub(crate) struct RetainedWordConfidenceStats {
     count: usize,
     sum: u64,
     low_confidence_count: usize,
-    pruned: PrunedWords,
-}
-
-/// Word counts of the lines that the confidence rule removed, in the terms of the page
-/// fragmentation check (whitespace tokens, tokens with a letter, letter tokens of at most
-/// two bytes). The page verdict adds them back to the kept text (#2312).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct PrunedWords {
-    pub words: usize,
-    pub scorable: usize,
-    pub short: usize,
+    pruned: OcrPrunedWords,
 }
 
 impl Default for RetainedWordConfidenceStats {
@@ -125,13 +115,13 @@ impl Default for RetainedWordConfidenceStats {
             count: 0,
             sum: 0,
             low_confidence_count: 0,
-            pruned: PrunedWords::default(),
+            pruned: OcrPrunedWords::default(),
         }
     }
 }
 
 impl RetainedWordConfidenceStats {
-    pub(crate) fn pruned_words(&self) -> PrunedWords {
+    pub(crate) fn pruned_words(&self) -> OcrPrunedWords {
         self.pruned
     }
 
@@ -2597,7 +2587,7 @@ mod tests {
             assert_eq!((pruned.words, pruned.scorable, pruned.short), (3, 3, 3));
             assert_eq!(
                 without_rule.retained_word_confidence_stats.pruned_words(),
-                PrunedWords::default()
+                OcrPrunedWords::default()
             );
         }
 

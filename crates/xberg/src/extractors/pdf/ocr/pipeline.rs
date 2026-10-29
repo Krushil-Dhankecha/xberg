@@ -68,7 +68,7 @@ use super::rendering::{
 use super::scoring::{
     NativeTextStats, OcrPageNoiseVerdict, accept_or_reject_ocr_page_counting_pruned, compute_quality_score,
     mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence, pipeline_stage_score,
-    pruned_word_counts_of, repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
+    pruned_words_of, repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
 };
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -892,7 +892,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
     let mut page_dictionary_invalid_word_ratio: ahash::AHashMap<u32, f64> = ahash::AHashMap::new();
     // Words of the lines that Tesseract's confidence rule removed, per page: the verdict judges the
     // page as the engine returned it (GH#2312, GH#2311). ~keep
-    let mut page_pruned_words: ahash::AHashMap<u32, super::scoring::PrunedWordCounts> = ahash::AHashMap::new();
+    let mut page_pruned_words: ahash::AHashMap<u32, crate::types::internal::OcrPrunedWords> = ahash::AHashMap::new();
     // Collected next to `page_mean_confidence` for the same reason: the per-page metadata is
     // gone by the time the summary attached to `PageContent.ocr_confidence` is built (#1568). ~keep
     let mut page_word_count: ahash::AHashMap<u32, u32> = ahash::AHashMap::new();
@@ -1539,7 +1539,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 {
                     page_dictionary_invalid_word_ratio.insert((page_idx + 1) as u32, ratio);
                 }
-                if let Some(pruned) = pruned_word_counts_of(&extraction_result.metadata.additional) {
+                if let Some(pruned) = pruned_words_of(extraction_result.ocr_internal_document.as_ref()) {
                     page_pruned_words.insert((page_idx + 1) as u32, pruned);
                 }
                 ocr_results.insert((page_idx + 1) as u32, extraction_result.content);
@@ -1677,7 +1677,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 {
                     page_dictionary_invalid_word_ratio.insert((*page_idx + 1) as u32, ratio);
                 }
-                if let Some(pruned) = pruned_word_counts_of(&extraction_result.metadata.additional) {
+                if let Some(pruned) = pruned_words_of(extraction_result.ocr_internal_document.as_ref()) {
                     page_pruned_words.insert((*page_idx + 1) as u32, pruned);
                 }
                 ocr_results.insert((*page_idx + 1) as u32, extraction_result.content);
@@ -3694,7 +3694,7 @@ pub(super) async fn extract_with_ocr_for_page(
                     .get(crate::ocr_metadata_keys::OCR_TESSERACT_DICT_INVALID_WORD_RATIO_METADATA_KEY)
                     .and_then(|v| v.as_f64());
                 let confidence = mean_text_conf_of(&ocr_result.metadata.additional);
-                let pruned_counts = pruned_word_counts_of(&ocr_result.metadata.additional);
+                let pruned_counts = pruned_words_of(ocr_result.ocr_internal_document.as_ref());
                 if let Some(summary) = page_ocr_confidence(
                     backend_confidence_semantics,
                     confidence,
@@ -3784,7 +3784,7 @@ pub(super) async fn extract_with_ocr_for_page(
                 .get(crate::ocr_metadata_keys::OCR_TESSERACT_DICT_INVALID_WORD_RATIO_METADATA_KEY)
                 .and_then(|v| v.as_f64());
             let confidence = mean_text_conf_of(&ocr_result.metadata.additional);
-            let pruned_counts = pruned_word_counts_of(&ocr_result.metadata.additional);
+            let pruned_counts = pruned_words_of(ocr_result.ocr_internal_document.as_ref());
             if let Some(summary) = page_ocr_confidence(
                 backend_confidence_semantics,
                 confidence,

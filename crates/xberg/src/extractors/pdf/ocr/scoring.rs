@@ -1,5 +1,7 @@
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 use crate::core::config::OcrQualityThresholds;
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+use crate::types::internal::OcrPrunedWords;
 
 /// Minimum average non-whitespace characters per page for extracted text to be treated as
 /// substantive. At or above this, prose-tuned quality checks (fragmentation, avg word length,
@@ -911,7 +913,7 @@ pub(super) fn ocr_recognition_noise_decision(
     thresholds: &OcrQualityThresholds,
     semantics: crate::plugins::ConfidenceSemantics,
     confidence: Option<f64>,
-    pruned: Option<&PrunedWordCounts>,
+    pruned: Option<&OcrPrunedWords>,
 ) -> OcrRecognitionNoiseDecision {
     let low_confidence = confidence_gate_rejects(semantics, confidence, thresholds.min_ocr_mean_confidence);
     let fragmented_noise = recognition_noise_by_fragmentation(&ocr_output_stats_with_pruned(content, pruned, thresholds), thresholds);
@@ -988,47 +990,24 @@ pub(super) fn ocr_output_stats(text: &str, thresholds: &OcrQualityThresholds) ->
     ocr_output_stats_with_pruned(text, None, thresholds)
 }
 
-/// Word counts of the lines that the Tesseract confidence rule removed from a page (#2312).
+/// The words of the lines that the Tesseract confidence rule removed from a page (#2312).
 ///
 /// The page verdict must judge the text as the engine returned it, before the removal: a
 /// page whose noise lines were removed would otherwise read as clean prose, and a clean text
-/// layer would lose to it (#2311). The OCR layer cannot call this module, so it reports the
-/// counts of the removed lines and this module adds them to the counts of the kept text. The
-/// three counts follow the definitions in [`NativeTextStats::compute`]. ~keep
+/// layer would lose to it (#2311). The OCR layer cannot call this module, so it leaves the
+/// counts on the page's structured document and this module adds them to the counts of the
+/// kept text. The counts follow the definitions in [`NativeTextStats::compute`]. `None` when
+/// no line was removed. ~keep
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct PrunedWordCounts {
-    /// Whitespace-separated tokens.
-    pub(crate) words: usize,
-    /// Tokens with at least one alphabetic character.
-    pub(crate) scorable: usize,
-    /// Scorable tokens of at most two bytes.
-    pub(crate) short: usize,
-}
-
-/// Read the removed-line counts that `perform_ocr` writes. `None` when no line was removed.
-#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-pub(crate) fn pruned_word_counts_of(
-    metadata: &ahash::AHashMap<std::borrow::Cow<'_, str>, serde_json::Value>,
-) -> Option<PrunedWordCounts> {
-    let count = |key: &str| {
-        metadata
-            .get(key)
-            .and_then(serde_json::Value::as_u64)
-            .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
-    };
-    Some(PrunedWordCounts {
-        words: count(crate::ocr_metadata_keys::OCR_PRUNED_WORDS_METADATA_KEY)?,
-        scorable: count(crate::ocr_metadata_keys::OCR_PRUNED_SCORABLE_WORDS_METADATA_KEY)?,
-        short: count(crate::ocr_metadata_keys::OCR_PRUNED_SHORT_WORDS_METADATA_KEY)?,
-    })
+pub(crate) fn pruned_words_of(document: Option<&crate::types::internal::InternalDocument>) -> Option<OcrPrunedWords> {
+    document.map(|d| d.ocr_pruned_words).filter(|p| p.words > 0)
 }
 
 /// [`ocr_output_stats`] over the kept text plus the words of the removed lines.
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 pub(super) fn ocr_output_stats_with_pruned(
     text: &str,
-    pruned: Option<&PrunedWordCounts>,
+    pruned: Option<&OcrPrunedWords>,
     thresholds: &OcrQualityThresholds,
 ) -> NativeTextStats {
     let normalized = normalize_markdown_for_scoring(text.trim());
@@ -1179,7 +1158,7 @@ pub(super) fn accept_or_reject_ocr_page_counting_pruned(
     dict_invalid_word_ratio: Option<f64>,
     confidence_semantics: crate::plugins::ConfidenceSemantics,
     confidence: Option<f64>,
-    pruned: Option<&PrunedWordCounts>,
+    pruned: Option<&OcrPrunedWords>,
 ) -> OcrPageAcceptance {
     if content.trim().is_empty() {
         return OcrPageAcceptance {
