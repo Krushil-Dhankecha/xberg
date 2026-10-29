@@ -165,3 +165,30 @@ fn signed_zero_scores_are_stable_ties_instead_of_a_confidence_order() {
     .unwrap();
     assert_eq!(metrics.mean_ap_50_95, Some(0.5));
 }
+
+#[test]
+fn recall_boundary_seven_of_twenty_matches_official_grid() {
+    let matched = vec![(1.0, true); 7];
+    assert_eq!(average_precision(&matched, 20), Some(35.0 / 101.0));
+}
+
+#[test]
+fn all_recall_boundaries_use_multiply_then_compare() {
+    for count in 1..=100 {
+        let matched = vec![(1.0, true); count];
+        let achieved = count as f64 / 100.0;
+        let points = (0..=100).filter(|step| *step as f64 * 0.01 <= achieved).count();
+        assert_eq!(average_precision(&matched, 100), Some(points as f64 / 101.0), "{count}");
+    }
+}
+
+#[test]
+fn iou_ninety_percent_uses_official_linspace_binary_boundary() {
+    let threshold = IOU_THRESHOLDS[8];
+    assert_eq!(threshold.to_bits(), (0.50_f64 + 8.0 * ((0.95 - 0.50) / 9.0)).to_bits());
+    let boundary = Page {
+        truth: vec![region("text", [0., 0., 1., 1.])],
+        ..page(vec![prediction("text", [0., 0., 0.8999999999999999, 1.], 0.9)])
+    };
+    assert!(page_matches(&boundary, "text", threshold, 100)[0].1);
+}

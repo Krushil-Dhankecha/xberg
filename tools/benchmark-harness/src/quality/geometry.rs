@@ -4,7 +4,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-const IOU_THRESHOLDS: [f64; 10] = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95];
+// Match NumPy linspace operation order at binary threshold boundaries.
+const IOU_THRESHOLDS: [f64; 10] = {
+    let mut thresholds = [0.0; 10];
+    let mut index = 0;
+    while index < 9 {
+        thresholds[index] = 0.50 + index as f64 * ((0.95 - 0.50) / 9.0);
+        index += 1;
+    }
+    thresholds[9] = 0.95;
+    thresholds
+};
 const RECALL_INTERVALS: usize = 100;
 const AP_MAX_DETECTIONS: usize = 100;
 
@@ -193,7 +203,7 @@ fn average_precision(matches: &[(f64, bool)], truth_count: usize) -> Option<f64>
         .collect();
     let precision: f64 = (0..=RECALL_INTERVALS)
         .map(|step| {
-            let recall = step as f64 / RECALL_INTERVALS as f64;
+            let recall = step as f64 * (1.0 / RECALL_INTERVALS as f64);
             points
                 .iter()
                 .filter(|(achieved, _)| *achieved >= recall)
