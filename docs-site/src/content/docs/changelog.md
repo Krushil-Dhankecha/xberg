@@ -106,6 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **(excel): Enforce XLSX text limits before cell materialization and apply workbook limits to file inputs.** (#2321)
+  Count repeated shared strings against the complete workbook’s text budget.
 - **(excel): Retain missing-worksheet warnings alongside readable sheet content after dependency updates.**
 - **(djot): Keep nested table captions inside footnotes without duplicating them.**
 - **(build): Retry Windows tool installation until the requested versions are verified.**

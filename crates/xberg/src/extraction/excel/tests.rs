@@ -3,6 +3,7 @@
 
 use super::*;
 
+mod content_limits;
 mod datetime;
 
 /// Permissive `SecurityLimits` for tests that only care about the entry-count
