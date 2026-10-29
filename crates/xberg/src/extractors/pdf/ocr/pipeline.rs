@@ -1037,6 +1037,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
                         native_page_layers: page_layers.clone(),
+                        layer_prefix_sink: None,
                     };
                     // See `extract_with_ocr_for_page`'s doc comment on
                     // `points_per_pixel_override`: this call hands the stage a single
@@ -1197,6 +1198,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
                         native_page_layers: page_layers.clone(),
+                        layer_prefix_sink: None,
                     };
                     let points_per_pixel_override = {
                         let (_, page_height_pt) = page_dimensions_pt(&render_doc, *page_idx);
@@ -2358,6 +2360,17 @@ pub(crate) struct PageOcrHints {
     /// Readable text layers by one-indexed document page, for a whole-document run that
     /// keeps the layer first on a page whose OCR text is judged recognition noise.
     pub(crate) native_page_layers: Option<std::sync::Arc<ahash::AHashMap<u32, String>>>,
+    /// Receives the layer text a page run put before its OCR text. A pipeline reads it to score
+    /// the stage on the OCR text alone, so the layer cannot change which stage wins. ~keep
+    pub(crate) layer_prefix_sink: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
+}
+
+/// The stage text without the layer lines a page run put before the OCR text.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(super) fn text_without_layer_prefixes(text: &str, prefixes: &[String]) -> String {
+    prefixes.iter().fold(text.to_string(), |text, prefix| {
+        text.replacen(&format!("{prefix}\n\n"), "", 1)
+    })
 }
 
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -3921,6 +3934,9 @@ pub(super) async fn extract_with_ocr_for_page(
                 && let Some(missing) = super::document::layer_lines_absent_from_ocr(layer, text)
             {
                 *text = format!("{missing}\n\n{text}");
+                if let Some(sink) = page_ocr_hints.as_ref().and_then(|hints| hints.layer_prefix_sink.as_ref()) {
+                    sink.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(missing.clone());
+                }
                 layer_before_noise[page_idx] = Some(missing);
             }
         }
@@ -5144,6 +5160,7 @@ async fn run_ocr_pipeline_stages(
         ahash::AHashMap<u32, crate::types::page::PageOcrConfidence>,
     )> = None;
 
+    let mut best_selection_text: Option<String> = None;
     let mut accumulated_usage: Vec<crate::types::LlmUsage> = Vec::new();
     // Track stages that errored outright (e.g. a VLM fallback that failed
     // authentication) so the failure is surfaced to the caller instead of being
@@ -5178,6 +5195,11 @@ async fn run_ocr_pipeline_stages(
             "Pipeline: trying OCR backend"
         );
 
+        let layer_prefixes = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let stage_hints = inputs.page_ocr_hints.clone().map(|mut hints| {
+            hints.layer_prefix_sink = hints.native_page_layers.is_some().then(|| layer_prefixes.clone());
+            hints
+        });
         let result = Box::pin(extract_with_ocr_for_page(
             inputs.content,
             inputs.images,
@@ -5188,7 +5210,7 @@ async fn run_ocr_pipeline_stages(
             inputs.page_rotation_degrees,
             inputs.skip_document_global_heuristic,
             inputs.points_per_pixel_override,
-            inputs.page_ocr_hints.clone(),
+            stage_hints,
             inputs.page_index_offset,
             inputs.xobject_document,
         ))
@@ -5210,7 +5232,13 @@ async fn run_ocr_pipeline_stages(
                 stage_ocr_confidence,
                 stage_recognition_noise_verdicts,
             )) => {
-                let text_score = compute_quality_score(&text, &pipeline.quality_thresholds);
+                // The stage is judged on its OCR text alone: a text layer put before it must not
+                // change the score, the accept decision or the choice between stages. ~keep
+                let selection_text = text_without_layer_prefixes(
+                    &text,
+                    &layer_prefixes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
+                );
+                let text_score = compute_quality_score(&selection_text, &pipeline.quality_thresholds);
                 let score = pipeline_stage_score(text_score, mean_conf);
 
                 tracing::debug!(
@@ -5281,15 +5309,16 @@ async fn run_ocr_pipeline_stages(
                 // non-empty one that is a materially worse replacement for an already-dense
                 // incumbent (F46).
                 let best_score = best_result.as_ref().map(|(_, best_score, ..)| *best_score);
-                let best_text = best_result.as_ref().map(|(text, ..)| text.as_str());
+                let best_text = best_selection_text.as_deref();
                 if should_replace_best_effort_result(
                     selection,
                     best_score,
                     best_text,
-                    &text,
+                    &selection_text,
                     score,
                     &pipeline.quality_thresholds,
                 ) {
+                    best_selection_text = Some(selection_text);
                     best_result = Some((
                         text,
                         score,
