@@ -100,6 +100,8 @@ jobs:
         run: mise run python:publish:archive:test
       - name: Test the fixture generator
         run: mise run fixtures:test
+      - name: Test the classic OCR cache acceptance harness
+        run: mise run test:classic-ocr-cache:harness
 
   plugin-freshness:
     if: github.event.pull_request.draft != true

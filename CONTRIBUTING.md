@@ -49,6 +49,10 @@ This installs the toolchain, the dependencies, and the pre-commit hooks via `pol
 
 For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run php:build`, `mise run swift:lint`, etc.
 
+When you change the classic OCR model catalog or the cache code behind `xberg cache seed-classic-ocr`, run
+`mise run test:classic-ocr-cache`. It builds the CLI, downloads every pinned PaddleOCR and Sceptre artifact, and
+verifies inference with the network off. CI does not run it, because it needs the network and the full model set.
+
 For the complete development workflow, build profiles, coding standards, and PR guidelines, see the full [Contributing Guide](https://docs.xberg.io/contributing/).
 
 ## Commit guidelines
