@@ -22,7 +22,7 @@ pub(crate) fn extract_metadata_from_native_document(
     ocr_quality_thresholds: &crate::core::config::OcrQualityThresholds,
     provenance_counts: Option<&[(usize, usize)]>,
 ) -> Result<PdfExtractionMetadata> {
-    let pdf_specific =
+    let (pdf_specific, drawn_prose_pages) =
         extract_pdf_specific_metadata(doc, scanned_min_confidence, ocr_quality_thresholds, provenance_counts)?;
     let common = extract_common_metadata(doc)?;
 
@@ -42,6 +42,7 @@ pub(crate) fn extract_metadata_from_native_document(
         created_by: common.created_by,
         pdf_specific,
         page_structure,
+        drawn_prose_pages,
     })
 }
 
@@ -51,7 +52,7 @@ fn extract_pdf_specific_metadata(
     scanned_min_confidence: f64,
     ocr_quality_thresholds: &crate::core::config::OcrQualityThresholds,
     provenance_counts: Option<&[(usize, usize)]>,
-) -> Result<PdfMetadata> {
+) -> Result<(PdfMetadata, Vec<u32>)> {
     let (major, minor) = doc.doc.version();
     let pdf_version = if major > 0 {
         Some(format!("{}.{}", major, minor))
@@ -81,14 +82,14 @@ fn extract_pdf_specific_metadata(
 
     let producer = get_info_string(&mut doc.doc, "Producer");
 
-    let (scanned_confidence, scanned_pages, fabricated_text_pages) = ocr_routing_pages(
+    let (scanned_confidence, scanned_pages, fabricated_text_pages, drawn_prose_pages) = ocr_routing_pages(
         &doc.doc,
         scanned_min_confidence,
         ocr_quality_thresholds,
         provenance_counts,
     );
 
-    Ok(PdfMetadata {
+    let metadata = PdfMetadata {
         pdf_version,
         producer,
         is_encrypted,
@@ -106,7 +107,8 @@ fn extract_pdf_specific_metadata(
         // metadata extraction never runs the layout gate itself. ~keep
         layout_gated_pages: None,
         layout_gate_reasons: None,
-    })
+    };
+    Ok((metadata, drawn_prose_pages))
 }
 
 /// Compute the raster scan-confidence/page-list pair and the separate fabricated-mapping
@@ -126,12 +128,21 @@ fn ocr_routing_pages(
     scanned_min_confidence: f64,
     ocr_quality_thresholds: &crate::core::config::OcrQualityThresholds,
     provenance_counts: Option<&[(usize, usize)]>,
-) -> (Option<f32>, Option<Vec<u32>>, Option<Vec<u32>>) {
+) -> (Option<f32>, Option<Vec<u32>>, Option<Vec<u32>>, Vec<u32>) {
     // Advisory: a document we cannot grade reports no scan evidence. ~keep
     let detection = crate::pdf::scan_detect::detect(doc);
     let scanned_confidence = detection.as_ref().map(|d| d.confidence);
     let mut scanned_pages: Option<Vec<u32>> = detection.as_ref().map(|d| {
         d.scanned_page_indices(scanned_min_confidence as f32)
+            .into_iter()
+            .map(|index| index as u32 + 1)
+            .collect()
+    });
+
+    // The pages that clear the threshold only through the drawn-prose rule: unlike the rest of
+    // `scanned_pages`, the default route sends them to OCR (GH#2313). ~keep
+    let drawn_prose_pages: Vec<u32> = detection.as_ref().map_or_else(Vec::new, |d| {
+        d.drawn_prose_page_indices(scanned_min_confidence as f32)
             .into_iter()
             .map(|index| index as u32 + 1)
             .collect()
@@ -167,7 +178,7 @@ fn ocr_routing_pages(
         fabricated_text_pages = Some(one_indexed);
     }
 
-    (scanned_confidence, scanned_pages, fabricated_text_pages)
+    (scanned_confidence, scanned_pages, fabricated_text_pages, drawn_prose_pages)
 }
 
 /// Extract common document metadata (title, author, keywords, dates, creator)

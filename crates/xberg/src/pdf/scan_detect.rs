@@ -111,6 +111,10 @@ pub(crate) struct ScanDetection {
     pub confidence: f32,
     /// Per-page confidence, indexed by zero-based page number.
     pub page_confidence: Vec<f32>,
+    /// Per page: the score above exists only because the page is a stub text layer over drawn
+    /// prose (see [`is_stub_layer_over_drawn_page`]). The default OCR route reads these pages
+    /// through [`ScanDetection::drawn_prose_page_indices`]. ~keep
+    pub drawn_prose: Vec<bool>,
 }
 
 impl ScanDetection {
@@ -122,6 +126,19 @@ impl ScanDetection {
             .enumerate()
             .filter(|(_, score)| **score >= threshold)
             .map(|(index, _)| index)
+            .collect()
+    }
+}
+
+impl ScanDetection {
+    /// Zero-based indices of pages that clear `min_confidence` only through the drawn-prose rule.
+    /// A scan with a good invisible-text sidecar is not in this list: the default OCR route
+    /// leaves it native. ~keep
+    pub(crate) fn drawn_prose_page_indices(&self, min_confidence: f32) -> Vec<usize> {
+        let scanned = self.scanned_page_indices(min_confidence);
+        scanned
+            .into_iter()
+            .filter(|index| self.drawn_prose.get(*index).copied().unwrap_or(false))
             .collect()
     }
 }
@@ -154,6 +171,16 @@ fn is_stub_layer_over_drawn_page(signals: &PageScanSignals) -> bool {
     signals.vector_path_density >= DRAWN_PAGE_PATH_DENSITY_MIN
         && signals.text_area_ratio <= TEXT_AREA_STUB_MAX
         && signals.glyph_count <= OCR_SCAN_MAX_GLYPHS
+}
+
+/// Whether the drawn-prose rule is the only reason the page's text counts as header-sized:
+/// raster coverage between the floor and full page, a stub layer over a drawn page, and text
+/// that is not header-sized by area. GH#2313.
+fn drawn_prose_decides(signals: &PageScanSignals) -> bool {
+    signals.image_coverage >= IMAGE_COVERAGE_MIN
+        && signals.image_coverage < IMAGE_COVERAGE_FULL
+        && !is_header_sized_text(signals)
+        && is_stub_layer_over_drawn_page(signals)
 }
 
 /// Grade one page's evidence. Pure, so it is testable without a [`PdfDocument`].
@@ -376,15 +403,19 @@ where
 pub(crate) fn detect(doc: &PdfDocument) -> Option<ScanDetection> {
     let page_count = doc.page_count().ok()?;
 
-    let page_confidence = map_pages(page_count, |page_index| {
-        page_signals(doc, page_index).as_ref().map_or(0.0, score_page)
+    let graded = map_pages(page_count, |page_index| {
+        page_signals(doc, page_index)
+            .as_ref()
+            .map_or((0.0, false), |signals| (score_page(signals), drawn_prose_decides(signals)))
     });
+    let (page_confidence, drawn_prose): (Vec<f32>, Vec<bool>) = graded.into_iter().unzip();
 
     let confidence = page_confidence.iter().copied().fold(0.0_f32, f32::max);
 
     Some(ScanDetection {
         confidence,
         page_confidence,
+        drawn_prose,
     })
 }
 

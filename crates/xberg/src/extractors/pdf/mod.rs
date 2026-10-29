@@ -2919,6 +2919,17 @@ impl PdfExtractor {
                 pdf_metadata.pdf_specific.page_count,
             );
 
+            // A stub text layer over a page whose prose is drawn passes every check above:
+            // the stub reads as clean text and the drawn prose has no text to grade. The scan
+            // detector knows the page by its path density and text area, so `Auto` consults
+            // that verdict through the same union step (GH#2313). ~keep
+            ocr::apply_flagged_pages(
+                &mut decision,
+                &pdf_metadata.drawn_prose_pages,
+                has_boundaries,
+                pdf_metadata.pdf_specific.page_count,
+            );
+
             tracing::debug!(
                 target: "xberg::pdf::ocr",
                 fallback = decision.fallback,
@@ -3864,6 +3875,7 @@ mod tests {
                 boundaries: None,
                 pages: None,
             }),
+            drawn_prose_pages: Vec::new(),
         };
 
         apply_extracted_pdf_metadata(&mut metadata, extracted, false);
@@ -6726,6 +6738,7 @@ mod tests {
                 ..Default::default()
             },
             page_structure: None,
+            drawn_prose_pages: Vec::new(),
         };
 
         // Empty native text everywhere triggers `whole_doc_failure` in the per-page gate.
@@ -6766,6 +6779,7 @@ mod tests {
                 ..Default::default()
             },
             page_structure: None,
+            drawn_prose_pages: Vec::new(),
         };
 
         let pages = scanned_pages_to_ocr(&config, &pdf_metadata, "", None);
@@ -6796,6 +6810,7 @@ mod tests {
                 ..Default::default()
             },
             page_structure: None,
+            drawn_prose_pages: Vec::new(),
         }
     }
 

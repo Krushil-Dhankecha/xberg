@@ -135,6 +135,12 @@ pub struct PdfExtractionMetadata {
     /// Page structure with boundaries and optional per-page metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_structure: Option<PageStructure>,
+
+    /// Pages (1-indexed) that clear the scan threshold only through the drawn-prose rule: a
+    /// stub text layer over a page whose prose is drawn (GH#2313). The default OCR route reads
+    /// this list. It is internal routing input, so it is never serialized. ~keep
+    #[serde(skip)]
+    pub drawn_prose_pages: Vec<u32>,
 }
 #[cfg_attr(alef, alef(skip))]
 /// Common PDF metadata fields extracted from the document info dictionary.

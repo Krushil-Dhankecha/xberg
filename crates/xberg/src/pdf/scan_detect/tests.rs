@@ -639,6 +639,7 @@ fn scanned_page_indices_selects_only_pages_at_or_above_the_threshold() {
     let detection = ScanDetection {
         confidence: 0.9,
         page_confidence: vec![0.0, 0.5, 0.85, 0.9],
+        drawn_prose: vec![false; 4],
     };
     assert_eq!(detection.scanned_page_indices(0.7), vec![2, 3]);
     assert_eq!(detection.scanned_page_indices(0.85), vec![2, 3]);
@@ -652,6 +653,7 @@ fn a_full_bleed_slide_is_selected_only_at_a_threshold_of_0_50_or_lower() {
     let slide = ScanDetection {
         confidence: SCORE_FULL_PAGE_RASTER,
         page_confidence: vec![SCORE_FULL_PAGE_RASTER],
+        drawn_prose: vec![false],
     };
     assert_eq!(slide.scanned_page_indices(0.50), vec![0]);
     assert_eq!(slide.scanned_page_indices(0.51), Vec::<usize>::new());
@@ -733,6 +735,7 @@ fn scanned_page_indices_clamps_an_out_of_range_threshold() {
     let detection = ScanDetection {
         confidence: 0.5,
         page_confidence: vec![0.0, 0.5],
+        drawn_prose: vec![false; 2],
     };
     // Negative thresholds clamp to 0.0, which still selects every page. ~keep
     assert_eq!(detection.scanned_page_indices(-1.0), vec![0, 1]);
@@ -1012,4 +1015,28 @@ fn carries_scan_raster_reads_raster_coverage_only() {
 
     let blank = PdfDocument::from_bytes(crate::pdf::render::build_minimal_pdf_with_mediabox(100.0, 100.0)).unwrap();
     assert!(!carries_scan_raster(&blank, 0), "a page without images carries no scan");
+}
+
+/// A page that clears the threshold on its own is not a drawn-prose page: the default route
+/// leaves a scan with a good text sidecar native, and only the rule's pages go to OCR.
+#[test]
+fn drawn_prose_page_indices_lists_only_the_pages_the_rule_selected() {
+    let detection = ScanDetection {
+        confidence: 0.9,
+        page_confidence: vec![0.9, 0.9, 0.2, 0.9],
+        drawn_prose: vec![false, true, true, true],
+    };
+    assert_eq!(detection.scanned_page_indices(0.7), vec![0, 1, 3]);
+    assert_eq!(detection.drawn_prose_page_indices(0.7), vec![1, 3]);
+}
+
+#[test]
+fn drawn_prose_decides_only_below_full_page_coverage_and_beyond_header_size() {
+    let mut signals = drawn_prose_with_stub_layer();
+    assert!(drawn_prose_decides(&signals));
+    signals.image_coverage = 0.9;
+    assert!(!drawn_prose_decides(&signals), "a full-page raster keeps its score");
+    signals.image_coverage = 0.3;
+    signals.text_area_ratio = 0.01;
+    assert!(!drawn_prose_decides(&signals), "header-sized text needs no rule");
 }
