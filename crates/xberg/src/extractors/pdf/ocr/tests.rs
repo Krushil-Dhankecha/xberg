@@ -5360,8 +5360,9 @@ pub(super) mod tests {
             .filter(|warning| warning.message.contains("suspected OCR recognition noise"))
             .collect::<Vec<_>>();
         assert_eq!(full_warnings.len(), 1, "full OCR must report overlapping signals once");
-        assert_eq!(result.0, SUSPECTED_NOISE);
-        assert_eq!(result.1.get(&1).map(String::as_str), Some(SUSPECTED_NOISE));
+        let with_layer = format!("{native_text}\n\n{SUSPECTED_NOISE}");
+        assert_eq!(result.0, with_layer);
+        assert_eq!(result.1.get(&1).map(String::as_str), Some(with_layer.as_str()));
         let warnings = result
             .8
             .iter()
