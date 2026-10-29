@@ -1119,8 +1119,8 @@ jobs:
           # `[target.wasm32-unknown-unknown] rustflags` entry is silently discarded
           # whenever RUSTFLAGS is set (CI sets `-D warnings`) — see
           # crates/xberg-wasm/build.rs — and rather than in package.json, which alef
-          # regenerates. Keep it in step with .task/languages/rust.yml's
-          # `wasm:build:all` so a local build measures what publish ships. ~keep
+          # regenerates. Keep it in step with mise-tasks/rust.toml's
+          # `rust:wasm:build:all` so a local build measures what publish ships. ~keep
           build-command: "CARGO_PROFILE_RELEASE_OPT_LEVEL=z pnpm run build:all && node scripts/fix-wasi-imports.mjs"
 
       - name: Enforce WASM CDN size budget (jsDelivr limits)
@@ -1890,10 +1890,10 @@ jobs:
           submodules: false
       # Zig is used only by the linux-gnu legs' glibc 2.28 floor build; one setup-mise call per
       # job keeps the mise cache for this key from carrying tools another call installed. ~keep
-      - name: Install Task and Zig
+      - name: Install Zig
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task zig
+          install-args: zig
           config-ref: ${{ github.sha }}
 
       - uses: xberg-io/actions/setup-rust@v1
@@ -1933,12 +1933,12 @@ jobs:
       - name: Package versioned Go archive with static-link metadata
         if: ${{ !matrix.musl }}
         shell: bash
-        run: task go:publish:package TARGET=${{ matrix.target }} VERSION=${{ needs.prepare.outputs.version }}
+        run: mise run go:publish:package "${{ matrix.target }}" "${{ needs.prepare.outputs.version }}"
 
       - name: Build and package musl Go archive
         if: ${{ matrix.musl }}
         shell: bash
-        run: task go:publish:package:musl TARGET=${{ matrix.target }} PLATFORM=${{ matrix.platform }} VERSION=${{ needs.prepare.outputs.version }}
+        run: mise run go:publish:package:musl "${{ matrix.target }}" "${{ matrix.platform }}" "${{ needs.prepare.outputs.version }}"
 
       - name: Ship + verify ONNX Runtime (glibc Linux)
         if: contains(matrix.target, '-linux-gnu')
@@ -3827,10 +3827,10 @@ jobs:
           ref: v1
           path: .python-publication-actions
           persist-credentials: false
-      - name: Install task runner
+      - name: Install mise
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task
+          install: "false"
       - uses: actions/download-artifact@v8
         with:
           pattern: python-wheels-*
@@ -3866,7 +3866,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.archive-token.outputs.token }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: task python:publish:archive:prepare
+        run: mise run python:publish:archive:prepare
       - name: Archive every Python distribution permanently
         if: needs.prepare.outputs.dry_run != 'true'
         uses: xberg-io/actions/archive-python@v1
@@ -3882,7 +3882,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.archive-token.outputs.token }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: task python:publish:archive:wait
+        run: mise run python:publish:archive:wait
       - name: Publish primarily to PyPI
         uses: xberg-io/actions/publish-pypi@v1
         with:

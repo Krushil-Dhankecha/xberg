@@ -409,7 +409,7 @@ def test_swift_dry_run_checks_run_artifact_without_release_mutation() -> None:
 
 def test_glibc_ffi_jobs_build_lzma_statically() -> None:
     jobs_and_actions = {
-        "go-ffi-libraries": "task go:publish:package",
+        "go-ffi-libraries": "mise run go:publish:package",
         "c-ffi-libraries": "xberg-io/actions/build-rust-ffi@v1",
         "java-natives": "xberg-io/actions/build-java-natives@v1",
         "csharp-natives": "xberg-io/actions/build-csharp-natives@v1",
@@ -457,8 +457,8 @@ def test_release_uses_supported_macos_deployment_floor() -> None:
 
 def test_go_release_packaging_matches_static_and_musl_setup_contracts() -> None:
     block = job_block(WORKFLOW.read_text(), "go-ffi-libraries")
-    assert "task go:publish:package TARGET=${{ matrix.target }}" in block
-    assert "task go:publish:package:musl TARGET=${{ matrix.target }}" in block
+    assert 'mise run go:publish:package "${{ matrix.target }}"' in block
+    assert 'mise run go:publish:package:musl "${{ matrix.target }}"' in block
     assert "archive-name: xberg-go-${{ matrix.platform }}.tar.gz" not in block
 
     release_script = GO_RELEASE_SCRIPT.read_text()
@@ -507,7 +507,7 @@ def test_macos_unit_tests_reclaim_artifacts_before_libheif() -> None:
     libheif = script.index("cargo test --locked --no-fail-fast -p xberg-libheif", cleanup)
     assert gliner < cleanup < libheif
     cleanup_block = script[cleanup:libheif]
-    assert "task rust:clean" in cleanup_block
+    assert "mise run rust:clean" in cleanup_block
 
 
 def test_xberg_unit_artifacts_are_reclaimed_before_workspace_tests() -> None:
@@ -659,7 +659,7 @@ def test_helm_publish_does_not_depend_on_the_cli_image_manifest() -> None:
 
 
 def test_publish_contracts_run_in_ci() -> None:
-    assert "task release:test:contracts" in CI_WORKFLOW.read_text()
+    assert "mise run release:test:contracts" in CI_WORKFLOW.read_text()
 
 
 def test_system_dependency_changes_trigger_rust_and_e2e_ci() -> None:
@@ -801,7 +801,7 @@ def test_csharp_native_build_leaves_rpath_to_generated_ffi_package() -> None:
 def assert_dart_e2e_formatter_bootstrap(workflow: str) -> None:
     freshness = job_block(workflow, "e2e-freshness")
     dart_setup = freshness.index("uses: dart-lang/setup-dart@")
-    verification = freshness.index("run: task e2e:verify")
+    verification = freshness.index("run: mise run e2e:verify")
     for directory, command in [
         ("packages/dart", "dart pub get"),
         ("e2e/dart", "dart pub get --enforce-lockfile"),

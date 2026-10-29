@@ -12,7 +12,7 @@ on:
       - "alef.toml"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "Taskfile.yml"
+      - "mise-tasks/**"
       - "pnpm-workspace.yaml"
       - "scripts/ci/wasm/**"
       - "scripts/ci/install-system-deps/**"
@@ -333,11 +333,13 @@ jobs:
         if: matrix.lang == 'wasm'
         uses: xberg-io/actions/install-wasi-sdk@v1
 
-      # Each leg installs Task plus its language toolchain (matrix.mise-tools) from mise.lock. ~keep
-      - name: Install Task and the leg's toolchain
+      # Each leg installs its language toolchain (matrix.mise-tools) from mise.lock; a leg with
+      # none sets up mise alone for `mise run`. ~keep
+      - name: Install mise and the leg's toolchain
         uses: xberg-io/actions/setup-mise@v1
         with:
-          install-args: task ${{ matrix.mise-tools }}
+          install: ${{ matrix.mise-tools && 'true' || 'false' }}
+          install-args: ${{ matrix.mise-tools }}
 
       - name: Resolve the mise Python version
         if: matrix.lang == 'python'
@@ -438,7 +440,7 @@ jobs:
 
       - name: Install wasm-pack
         if: matrix.lang == 'wasm'
-        run: task demo:dev:setup:wasm-pack
+        run: mise run demo:dev:setup:wasm-pack
 
       - name: Install alef CLI
         uses: xberg-io/actions/install-alef@v1
@@ -486,9 +488,9 @@ jobs:
                 sleep 60
               done ) &
             trap 'kill $!' EXIT
-            timeout --signal=TERM --kill-after=60 100m task kotlin-android:e2e
+            timeout --signal=TERM --kill-after=60 100m mise run kotlin-android:e2e
           else
-            task ${{ matrix.lang }}:e2e
+            mise run ${{ matrix.lang }}:e2e
           fi
         shell: bash
         env:
@@ -531,7 +533,7 @@ jobs:
           # Tee the FULL output (alef + swiftc + swift runtime) to a file so it survives
           # even if the console truncates or the crash report lands only on stderr.
           set -o pipefail
-          task swift:e2e 2>&1 | tee /tmp/swift-crash/e2e-full.log
+          mise run swift:e2e 2>&1 | tee /tmp/swift-crash/e2e-full.log
 
       - name: Capture swift crash backtrace
         if: ${{ matrix.lang == 'swift' && failure() }}
