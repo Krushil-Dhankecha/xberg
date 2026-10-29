@@ -916,7 +916,8 @@ pub(super) fn ocr_recognition_noise_decision(
     pruned: Option<&OcrPrunedWords>,
 ) -> OcrRecognitionNoiseDecision {
     let low_confidence = confidence_gate_rejects(semantics, confidence, thresholds.min_ocr_mean_confidence);
-    let fragmented_noise = recognition_noise_by_fragmentation(&ocr_output_stats_with_pruned(content, pruned, thresholds), thresholds);
+    let fragmented_noise =
+        recognition_noise_by_fragmentation(&ocr_output_stats_with_pruned(content, pruned, thresholds), thresholds);
     OcrRecognitionNoiseDecision {
         low_confidence,
         fragmented_noise,
@@ -1021,7 +1022,10 @@ pub(super) fn ocr_output_stats_with_pruned(
         return stats;
     };
     let (mut scorable, mut short) = (0usize, 0usize);
-    for word in scoring_input.split_whitespace().filter(|w| w.chars().any(char::is_alphabetic)) {
+    for word in scoring_input
+        .split_whitespace()
+        .filter(|w| w.chars().any(char::is_alphabetic))
+    {
         scorable += 1;
         if word.len() <= 2 {
             short += 1;
@@ -1167,7 +1171,8 @@ pub(super) fn accept_or_reject_ocr_page_counting_pruned(
             verdict: None,
         };
     }
-    let recognition_noise = ocr_recognition_noise_decision(&content, thresholds, confidence_semantics, confidence, pruned);
+    let recognition_noise =
+        ocr_recognition_noise_decision(&content, thresholds, confidence_semantics, confidence, pruned);
     let dictionary_noise = is_dictionary_invalid_noise(dict_invalid_word_ratio, thresholds);
     if !recognition_noise.suspected() && !dictionary_noise {
         return OcrPageAcceptance {

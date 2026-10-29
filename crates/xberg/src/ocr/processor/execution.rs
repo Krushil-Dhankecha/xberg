@@ -4558,7 +4558,8 @@ mod tests {
         </p></div></div>"#;
 
     fn invented_dictionary(word: &str) -> Option<bool> {
-        Some(["cook", "meat", "and", "eggs"].contains(&word.to_lowercase().as_str()))
+        // The fragments are too short for the engine to judge, so only the confidence rule can remove them.
+        ["cook", "meat", "and", "eggs"].contains(&word.to_lowercase().as_str()).then_some(true)
     }
 
     fn parse_photo_page(min_line_confidence: f64) -> crate::ocr::hocr_parser::HocrParseResult {
@@ -4580,10 +4581,19 @@ mod tests {
 
         let off_text = flatten_hocr_elements_to_text(&off.document.elements);
         let on_text = flatten_hocr_elements_to_text(&on.document.elements);
-        assert!(off_text.contains("vkl"), "control: a zero floor keeps the fragments: {off_text:?}");
-        assert_eq!(off.retained_word_confidence_stats.pruned_words(), crate::types::internal::OcrPrunedWords::default());
+        assert!(
+            off_text.contains("vkl"),
+            "control: a zero floor keeps the fragments: {off_text:?}"
+        );
+        assert_eq!(
+            off.retained_word_confidence_stats.pruned_words(),
+            crate::types::internal::OcrPrunedWords::default()
+        );
         assert!(on_text.contains("Cook meat and eggs"), "kept: {on_text:?}");
-        assert!(on_text.contains("qzx meat"), "a line with a dictionary word is kept: {on_text:?}");
+        assert!(
+            on_text.contains("qzx meat"),
+            "a line with a dictionary word is kept: {on_text:?}"
+        );
         assert!(!on_text.contains("vkl"), "fragments removed: {on_text:?}");
         assert_eq!(on.retained_word_confidence_stats.pruned_words().words, 3);
     }

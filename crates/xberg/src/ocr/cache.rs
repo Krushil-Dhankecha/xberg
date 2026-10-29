@@ -883,7 +883,10 @@ mod tests {
             .expect("the entry must be a hit");
 
         assert_eq!(
-            cached.internal_document.expect("the structured document").ocr_pruned_words,
+            cached
+                .internal_document
+                .expect("the structured document")
+                .ocr_pruned_words,
             removed
         );
     }

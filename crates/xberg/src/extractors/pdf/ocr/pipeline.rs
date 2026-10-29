@@ -67,8 +67,8 @@ use super::rendering::{
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 use super::scoring::{
     NativeTextStats, OcrPageNoiseVerdict, accept_or_reject_ocr_page_counting_pruned, compute_quality_score,
-    mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence, pipeline_stage_score,
-    pruned_words_of, repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
+    mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence, pipeline_stage_score, pruned_words_of,
+    repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
 };
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -3719,7 +3719,11 @@ pub(super) async fn extract_with_ocr_for_page(
                 #[cfg(not(feature = "pdf"))]
                 let page_content = ocr_result.content;
                 // The page is judged as the engine returned it: the words of removed lines count (GH#2312).
-                let pruned_words = if margin_filtered_content_applied { None } else { pruned_counts };
+                let pruned_words = if margin_filtered_content_applied {
+                    None
+                } else {
+                    pruned_counts
+                };
                 let acceptance = accept_or_reject_ocr_page_counting_pruned(
                     document_page_idx,
                     page_content,
@@ -3809,7 +3813,11 @@ pub(super) async fn extract_with_ocr_for_page(
             #[cfg(not(feature = "pdf"))]
             let page_content = ocr_result.content;
             // The page is judged as the engine returned it: the words of removed lines count (GH#2312).
-            let pruned_words = if margin_filtered_content_applied { None } else { pruned_counts };
+            let pruned_words = if margin_filtered_content_applied {
+                None
+            } else {
+                pruned_counts
+            };
             let acceptance = accept_or_reject_ocr_page_counting_pruned(
                 document_page_idx,
                 page_content,

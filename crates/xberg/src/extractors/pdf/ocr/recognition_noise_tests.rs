@@ -959,7 +959,13 @@ fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
             min_line_confidence: floor,
         };
         let result = parse_hocr_to_internal_document_with_page_offset_and_stats(&hocr, Some(&filter), 1);
-        let text = result.document.elements.iter().map(|e| e.text.as_str()).collect::<Vec<_>>().join("\n\n");
+        let text = result
+            .document
+            .elements
+            .iter()
+            .map(|e| e.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         (text, result.retained_word_confidence_stats)
     };
     let thresholds = OcrQualityThresholds::default();
@@ -968,14 +974,20 @@ fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
     let counts = stats.pruned_words();
 
     assert_eq!(counts.words, 16, "four removed lines of four fragments");
-    assert!(!kept_text.contains('x'), "the rule removed the noise lines: {kept_text}");
+    assert!(
+        !kept_text.contains('x'),
+        "the rule removed the noise lines: {kept_text}"
+    );
 
     let oracle = ocr_output_stats(&unpruned_text, &thresholds);
     let combined = ocr_output_stats_with_pruned(&kept_text, Some(&counts), &thresholds);
     assert_eq!(combined.word_count, oracle.word_count);
     assert_eq!(combined.fragmented_word_ratio, oracle.fragmented_word_ratio);
 
-    assert!(is_ocr_recognition_noise(&unpruned_text, &thresholds), "control: the unpruned page is noise");
+    assert!(
+        is_ocr_recognition_noise(&unpruned_text, &thresholds),
+        "control: the unpruned page is noise"
+    );
     assert!(
         !is_ocr_recognition_noise(&kept_text, &thresholds),
         "the kept text alone reads as clean"
