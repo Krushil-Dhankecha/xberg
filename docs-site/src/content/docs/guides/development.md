@@ -234,9 +234,6 @@ languages have no dedicated lint task. Compiled bindings expose a native linter:
 
 ```bash title="Terminal"
 mise run rust:lint          # cargo fmt + clippy (auto-fix); rust:lint:check for check-only
-mise run go:lint            # golangci-lint
-mise run ruby:lint          # rubocop + steep
-mise run php:lint           # mago
 mise run csharp:lint        # dotnet format
 mise run swift:lint         # swift format lint
 mise run zig:lint           # zig fmt --check

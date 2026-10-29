@@ -25,7 +25,7 @@ x-ai-rulez:
 Xberg specifics on top of the shared Alef workflow skill (generic regenerate/verify/commit loop).
 
 - Check `alef.toml` before touching anything in `packages/*/` or a binding crate.
-- `mise run alef:generate` runs `alef all --clean` and formats via poly; there is no `mise run alef:format`.
+- `mise run alef:generate` runs `alef all --clean` and formats via poly; there is no separate `alef:format` task.
 - `mise run alef:verify` runs `alef verify --exit-code`.
 - The `alef:*` namespace is exactly: `generate`, `verify`, `build`, `sync`, `docs`, `verify:readme-paths`,
   `verify:ffi-formats`, `verify:fields`.

@@ -47,7 +47,7 @@ This installs the toolchain, the dependencies, and the pre-commit hooks via `pol
 | `mise run format` | Format all code                                 |
 | `mise run check`  | Combined lint + format check (no modifications) |
 
-For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run python:build`, `mise run node:format`, etc.
+For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run php:build`, `mise run swift:lint`, etc.
 
 For the complete development workflow, build profiles, coding standards, and PR guidelines, see the full [Contributing Guide](https://docs.xberg.io/contributing/).
 
