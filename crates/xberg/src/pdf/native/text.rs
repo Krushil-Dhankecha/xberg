@@ -15,7 +15,8 @@ use crate::pdf::structure::constants::{
 use crate::pdf::text::{contains_html_markup, fix_pdf_control_chars};
 use crate::types::{PageBoundary, PageContent};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap, HashMap};
 use xberg_native_pdf::document::ReadingOrder;
 
 /// Per-page fabricated-mapping character counts `(fabricated, total)`, indexed by zero-based
@@ -603,6 +604,16 @@ impl<'a> LineTrack<'a> {
     }
 }
 
+/// Integer key that sorts like `f32::total_cmp`, for ordered sets and heaps.
+fn ordered_key(value: f32) -> u32 {
+    let bits = value.to_bits();
+    if bits & 0x8000_0000 != 0 {
+        !bits
+    } else {
+        bits | 0x8000_0000
+    }
+}
+
 /// Group spans into text lines. A span joins the line whose baseline, continued
 /// to the span's x, it overlaps; otherwise it starts a new line. Lines come back
 /// top to bottom, and the spans of each line left to right. Two lines are never
@@ -614,26 +625,54 @@ fn group_spans_into_baseline_lines<'a>(
     sorted.sort_by(|a, b| a.bbox.x.total_cmp(&b.bbox.x).then(b.bbox.y.total_cmp(&a.bbox.y)));
 
     // Spans arrive in x order, so a track that ends further left than the widest
-    // allowed gap can never take this span or a later one. Keeping only the
-    // reachable tracks bounds the work per span by the number of lines, not by
-    // the number of spans already placed.
-    let widest_gap = LINE_MAX_GAP_EM * spans.iter().map(|span| span.font_size).fold(1.0_f32, f32::max);
+    // allowed gap can never take this span or a later one: it leaves the active
+    // set. Among the active tracks, only those whose last baseline lies within
+    // `reach` of the span can fit it, so a span is compared with the nearby
+    // baselines instead of every active track.
+    let max_font = spans.iter().map(|span| span.font_size).fold(1.0_f32, f32::max);
+    let widest_gap = LINE_MAX_GAP_EM * max_font;
+    let max_width = spans.iter().map(|span| span.bbox.width).fold(0.0_f32, f32::max);
+    // A fitting span sits within the band of the predicted baseline, which moves
+    // from the last baseline by at most the largest slope over the largest
+    // distance an active track can have from the span. The factor and the
+    // constant absorb f32 rounding; `fit` still decides every candidate.
+    let reach = (LINE_BASELINE_BAND_EM * max_font + LINE_MAX_SLOPE * (widest_gap + max_width)) * 1.01 + 1.0;
+
     let mut tracks: Vec<LineTrack> = Vec::new();
-    let mut reachable: Vec<usize> = Vec::new();
+    let mut by_baseline: BTreeSet<(u32, usize)> = BTreeSet::new();
+    let mut by_end: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::new();
     for span in sorted {
-        reachable.retain(|&index| span.bbox.x - tracks[index].end_x <= widest_gap);
-        let best = reachable
-            .iter()
-            .filter_map(|&index| tracks[index].fit(span).map(|error| (index, error)))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(index, _)| index);
-        match best {
-            Some(index) => tracks[index].push(span),
-            None => {
-                reachable.push(tracks.len());
-                tracks.push(LineTrack::new(span));
+        while let Some(&Reverse((end_key, index))) = by_end.peek() {
+            let track = &tracks[index];
+            if end_key != ordered_key(track.end_x) {
+                by_end.pop();
+            } else if span.bbox.x - track.end_x > widest_gap {
+                by_end.pop();
+                by_baseline.remove(&(ordered_key(track.last_y), index));
+            } else {
+                break;
             }
         }
+        let low = (ordered_key(span.bbox.y - reach), 0);
+        let high = (ordered_key(span.bbox.y + reach), usize::MAX);
+        let best = by_baseline
+            .range(low..=high)
+            .filter_map(|&(_, index)| tracks[index].fit(span).map(|error| (index, error)))
+            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+            .map(|(index, _)| index);
+        let index = match best {
+            Some(index) => {
+                by_baseline.remove(&(ordered_key(tracks[index].last_y), index));
+                tracks[index].push(span);
+                index
+            }
+            None => {
+                tracks.push(LineTrack::new(span));
+                tracks.len() - 1
+            }
+        };
+        by_baseline.insert((ordered_key(tracks[index].last_y), index));
+        by_end.push(Reverse((ordered_key(tracks[index].end_x), index)));
     }
 
     tracks.sort_by(|a, b| {
