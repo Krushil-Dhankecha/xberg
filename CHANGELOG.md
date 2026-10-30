@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **(ocr): Add regression coverage for caller-selected image budgets in direct and staged OCR.** (#2325)
 - **(ci): Run governance, fixture, archive and OCR-cache contract tests, and document manual OCR-cache acceptance.**
 - **(layout): Simplify YOLO decoding and remove its function-length lint exception.** (#1567)
 - **(development): Consolidate Mise task aliases and align guides with supported commands.**
