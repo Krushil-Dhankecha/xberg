@@ -41,6 +41,173 @@ fn test_xobject_only_page_text_extracted_with_orphaned_do_operands() {
     assert!(text.contains("overlay text"), "extract_text came back empty: {text:?}");
 }
 
+/// A page whose only content is a Form XObject holding the whole body inside a
+/// `/PlacedPDF` scope must extract the body, not drop it.
+#[test]
+fn test_placed_pdf_body_inside_form_xobject_is_extracted() {
+    let lines: Vec<String> = (0..30)
+        .map(|i| format!("Paragraph line number {i} of the placed body text"))
+        .collect();
+    let doc = PdfDocument::from_bytes(build_placed_pdf_inside_form_pdf(&lines)).expect("parse pdf");
+
+    let text = doc.extract_text(0).unwrap();
+    assert!(text.contains("Paragraph line number 0 "), "first line lost: {text:?}");
+    assert!(text.contains("Paragraph line number 29 "), "last line lost: {text:?}");
+    let chars: String = doc.extract_chars(0).unwrap().iter().map(|c| c.char).collect();
+    assert!(
+        chars.contains("Paragraph line number 29 "),
+        "char layer lost the body: {chars:?}"
+    );
+}
+
+/// A short `/PlacedPDF` scope inside a form (a figure label, not the page
+/// body) stays suppressed.
+#[test]
+fn test_small_placed_pdf_inside_form_xobject_stays_suppressed() {
+    let lines = vec!["Figure label".to_string()];
+    let doc = PdfDocument::from_bytes(build_placed_pdf_inside_form_pdf(&lines)).expect("parse pdf");
+    let text = doc.extract_text(0).unwrap();
+    assert!(
+        !text.contains("Figure label"),
+        "decorative placed text leaked: {text:?}"
+    );
+}
+
+/// A page paints its own body, then a form holding a shifted copy of that body
+/// inside `/PlacedPDF`. The copy is a duplicate overlay: the form's verdict must
+/// count the page's own text, so the copy stays suppressed.
+#[test]
+fn test_shifted_duplicate_placed_form_is_suppressed_when_page_has_body() {
+    let lines: Vec<String> = (0..30)
+        .map(|i| format!("Paragraph line number {i} of the page body text"))
+        .collect();
+    let page = format!("{}/Fm0 Do\n", text_lines_stream(&lines, 20, 780));
+    let form = format!("/PlacedPDF /MC0 BDC\n{}EMC\n", text_lines_stream(&lines, 29, 771));
+    let doc = PdfDocument::from_bytes(build_page_and_form_pdf(&page, &form)).expect("parse pdf");
+
+    let text = doc.extract_text(0).unwrap();
+    assert_eq!(
+        text.matches("Paragraph line number 7 ").count(),
+        1,
+        "duplicate overlay copy was kept: {text:?}"
+    );
+    let chars: String = doc.extract_chars(0).unwrap().iter().map(|c| c.char).collect();
+    assert_eq!(
+        chars.matches("Paragraph line number 7 ").count(),
+        1,
+        "char layer kept the duplicate overlay copy: {chars:?}"
+    );
+}
+
+/// Page body text plus a form with a placed body of different words: the placed
+/// text is real content, so counting the page text must not suppress it.
+#[test]
+fn test_unique_placed_form_is_kept_when_page_has_body() {
+    let body: Vec<String> = (0..30).map(|i| format!("Alpha entry {i} on the page itself")).collect();
+    let placed: Vec<String> = (0..30)
+        .map(|i| format!("Zulu sentence {i} inside the placed region"))
+        .collect();
+    let page = format!("{}/Fm0 Do\n", text_lines_stream(&body, 20, 780));
+    let form = format!("/PlacedPDF /MC0 BDC\n{}EMC\n", text_lines_stream(&placed, 300, 780));
+    let doc = PdfDocument::from_bytes(build_page_and_form_pdf(&page, &form)).expect("parse pdf");
+
+    let text = doc.extract_text(0).unwrap();
+    assert!(text.contains("Alpha entry 7 "), "page body lost: {text:?}");
+    assert!(text.contains("Zulu sentence 7 "), "unique placed text lost: {text:?}");
+}
+
+/// The page keeps its own placed text, runs a form, then paints more placed
+/// text. The form must give the saved verdict back, not reset it to false.
+#[test]
+fn test_page_placed_text_after_a_form_is_still_kept() {
+    let lines: Vec<String> = (0..30)
+        .map(|i| format!("Paragraph line number {i} of the placed body text"))
+        .collect();
+    let tail = vec!["Closing line after the form".to_string()];
+    let page = format!(
+        "/PlacedPDF /MC0 BDC\n{}EMC\n/Fm0 Do\n/PlacedPDF /MC1 BDC\n{}EMC\n",
+        text_lines_stream(&lines, 20, 780),
+        text_lines_stream(&tail, 20, 300)
+    );
+    let form = text_lines_stream(&["Form label".to_string()], 400, 100);
+    let doc = PdfDocument::from_bytes(build_page_and_form_pdf(&page, &form)).expect("parse pdf");
+
+    let text = doc.extract_text(0).unwrap();
+    assert!(
+        text.contains("Paragraph line number 5 "),
+        "page placed body lost: {text:?}"
+    );
+    assert!(text.contains("Form label"), "form text lost: {text:?}");
+    assert!(
+        text.contains("Closing line after the form"),
+        "page placed text after the form was dropped: {text:?}"
+    );
+}
+
+/// Two pages paint the same form. Page 1 has no body of its own, so the form
+/// body is kept there. Page 2 paints its own copy of that body, so the form is a
+/// duplicate overlay there. The verdict of page 1 must not be reused on page 2.
+#[test]
+fn test_form_placed_verdict_is_not_reused_across_pages() {
+    let lines: Vec<String> = (0..30)
+        .map(|i| format!("Paragraph line number {i} of the shared body text"))
+        .collect();
+    let form = format!("/PlacedPDF /MC0 BDC\n{}EMC\n", text_lines_stream(&lines, 29, 771));
+    let page_a = "/Fm0 Do\n".to_string();
+    let page_b = format!("{}/Fm0 Do\n", text_lines_stream(&lines, 20, 780));
+    let doc = PdfDocument::from_bytes(build_two_pages_sharing_form_pdf(&page_a, &page_b, &form)).expect("parse pdf");
+
+    let first = doc.extract_text(0).unwrap();
+    assert!(
+        first.contains("Paragraph line number 7 "),
+        "page 1 lost the form body: {first:?}"
+    );
+    let second = doc.extract_text(1).unwrap();
+    assert_eq!(
+        second.matches("Paragraph line number 7 ").count(),
+        1,
+        "page 2 reused the verdict of page 1: {second:?}"
+    );
+}
+
+/// Page 1 paints a form with a placed body, and that form paints a second form
+/// whose text is kept under the first form's verdict. Page 2 paints the second
+/// form directly, next to its own copy of that text, so the form is a duplicate
+/// overlay there. The spans of the nested form must not be reused on page 2.
+#[test]
+fn test_form_nested_in_a_placed_form_is_not_reused_across_pages() {
+    let outer_lines: Vec<String> = (0..30)
+        .map(|i| format!("Outer body sentence {i} about harbour tides"))
+        .collect();
+    let inner_lines: Vec<String> = (0..30)
+        .map(|i| format!("Inner note number {i} covering orchard frost"))
+        .collect();
+    let outer = format!(
+        "/PlacedPDF /MC0 BDC\n{}EMC\n/Fm1 Do\n",
+        text_lines_stream(&outer_lines, 29, 771)
+    );
+    let inner = format!(
+        "/PlacedPDF /MC1 BDC\n{}EMC\n",
+        text_lines_stream(&inner_lines, 300, 771)
+    );
+    let page_a = "/Fm0 Do\n".to_string();
+    let page_b = format!("{}/Fm1 Do\n", text_lines_stream(&inner_lines, 20, 780));
+    let doc = PdfDocument::from_bytes(build_two_pages_with_forms_pdf(&page_a, &page_b, &outer, Some(&inner)))
+        .expect("parse pdf");
+
+    let first = doc.extract_text(0).unwrap();
+    assert!(
+        first.contains("Inner note number 7 "),
+        "page 1 lost the nested form text: {first:?}"
+    );
+    let second = doc.extract_text(1).unwrap();
+    assert_eq!(
+        second.matches("Inner note number 7 ").count(),
+        1,
+        "page 2 reused the spans of the nested form from page 1: {second:?}"
+    );
+}
+
 #[test]
 fn test_get_page_content_data_empty_content() {
     let pdf = build_minimal_pdf(b"");

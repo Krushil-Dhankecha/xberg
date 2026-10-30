@@ -382,9 +382,34 @@ impl<'doc> TextExtractor<'doc> {
                 self.mcid_scope_stack
                     .push(crate::structure::McidScope::Form(xobject_ref));
 
+                // The /PlacedPDF verdict is made from one content stream, and the
+                // page stream does not hold the text of the forms it paints. A
+                // form that carries its own /PlacedPDF scope gets its own verdict,
+                // counted against the text the page paints outside any placed
+                // scope, so a body placed inside a form is not dropped and a
+                // duplicate overlay in a form is still suppressed. A page that
+                // already keeps /PlacedPDF text keeps it inside the form. ~keep
+                let saved_placed_pdf_keep = self.placed_pdf_keep;
+                let form_scan = if saved_placed_pdf_keep {
+                    None
+                } else {
+                    Self::scan_placed_text(&stream_data)
+                };
+                let verdicts_before = self.form_placed_verdicts;
+                let form_scan_made = form_scan.is_some();
+                if let Some(scan) = form_scan {
+                    self.form_placed_verdicts += 1;
+                    self.form_verdict_depth += 1;
+                    self.placed_pdf_keep = Self::placed_scan_dominates(&scan, self.page_outside_text());
+                }
+
                 self.xobject_depth += 1;
                 let parse_result = self.run_content_stream(&stream_data);
                 self.xobject_depth -= 1;
+                self.placed_pdf_keep = saved_placed_pdf_keep;
+                if form_scan_made {
+                    self.form_verdict_depth -= 1;
+                }
                 // Pop the Form XObject scope pushed before the
                 // content-stream walk. Cleared regardless of parse
                 // success so the parent stream's scope is correctly
@@ -503,7 +528,14 @@ impl<'doc> TextExtractor<'doc> {
                 // We still require `has_own_resources` so that font lookups are
                 // self-contained; XObjects that inherit page-level fonts would
                 // produce spans whose glyph mappings depend on caller context. ~keep
-                if has_own_resources && self.extract_spans && !has_filters {
+                // A form whose run made a page-dependent /PlacedPDF verdict, or ran inside such a
+                // form, is not cached: another page would reuse spans judged against this page's text. ~keep
+                if has_own_resources
+                    && self.extract_spans
+                    && !has_filters
+                    && self.form_placed_verdicts == verdicts_before
+                    && self.form_verdict_depth == 0
+                {
                     let new_spans = if self.spans.len() > spans_before {
                         Some(self.spans[spans_before..].to_vec())
                     } else {

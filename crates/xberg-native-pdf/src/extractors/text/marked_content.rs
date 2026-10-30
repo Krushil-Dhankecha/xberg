@@ -7,7 +7,41 @@
 
 use super::*;
 
+/// Length and bytes of the text-show operands in one `/PlacedPDF` bucket.
+#[derive(Debug, Default)]
+pub(super) struct PlacedBucket {
+    chars: usize,
+    txt: Vec<u8>,
+}
+
+/// Text of one content stream, split into placed and non-placed buckets.
+#[derive(Default)]
+pub(super) struct PlacedScan {
+    placed: PlacedBucket,
+    other: PlacedBucket,
+}
+
 impl<'doc> TextExtractor<'doc> {
+    /// Decide the placed verdict of a page stream. The page stream is kept so
+    /// that a form with its own placed scope can count the page's own text.
+    pub(super) fn begin_page_placed_scan(&mut self, content_stream: &[u8]) {
+        self.placed_pdf_keep = Self::placed_pdf_text_dominates(content_stream, &PlacedBucket::default());
+        self.page_content.clear();
+        self.page_content.extend_from_slice(content_stream);
+        self.page_outside_text = None;
+    }
+
+    /// Text the page stream paints outside any placed scope. Parsed on the first
+    /// call for a page, because only a form with its own placed scope needs it.
+    pub(super) fn page_outside_text(&mut self) -> &PlacedBucket {
+        let content = &self.page_content;
+        self.page_outside_text.get_or_insert_with(|| {
+            Self::scan_text_buckets(content)
+                .map(|scan| scan.other)
+                .unwrap_or_default()
+        })
+    }
+
     /// Update the artifact state based on the marked content stack.
     ///
     /// This method computes whether we're currently inside an artifact region
@@ -66,29 +100,31 @@ impl<'doc> TextExtractor<'doc> {
     ///    (e.g. an InDesign figure that holds the page's labels and body text, as
     ///    on placed floor-plan / marketing spreads) and must be kept.
     ///
-    /// Conservative on purpose: when placed text lives in a nested XObject the
-    /// page-stream scan undercounts it and gate 1 falls back to suppression (the
-    /// prior behaviour).
-    pub(super) fn placed_pdf_text_dominates(content_stream: &[u8]) -> bool {
-        // Gate: only pages that actually carry the InDesign tag pay for a parse. ~keep
+    /// The scan reads one content stream. `process_xobject` runs it again on each
+    /// form's own stream, so a body placed inside a form is judged on that form's
+    /// text together with the text the page itself paints outside any placed
+    /// scope (`outside`). Without the page text, a duplicate overlay in a form
+    /// would have no outside text to repeat and would be kept. ~keep
+    pub(super) fn placed_pdf_text_dominates(content_stream: &[u8], outside: &PlacedBucket) -> bool {
+        Self::scan_placed_text(content_stream).is_some_and(|scan| Self::placed_scan_dominates(&scan, outside))
+    }
+
+    /// Bucket the text-show operands of one content stream by `/PlacedPDF` scope.
+    /// Returns `None` when the stream carries no placed tag or does not parse.
+    pub(super) fn scan_placed_text(content_stream: &[u8]) -> Option<PlacedScan> {
+        // Gate: only streams that actually carry the InDesign tag pay for a parse. ~keep
         if !content_stream.windows(b"PlacedPDF".len()).any(|w| w == b"PlacedPDF") {
-            return false;
+            return None;
         }
-        let Ok(operators) = parse_content_stream(content_stream) else {
-            return false;
-        };
-        // A substantial placed body; below this a placed region is treated as a
-        // decorative figure, not the page's logical content. ~keep
-        const MIN_PLACED_CHARS: usize = 800;
-        // Keep placed text whose words are mostly unique; suppress it once a
-        // majority is also present in the non-placed text (a duplicate overlay). ~keep
-        const MAX_DUP_FRACTION: f64 = 0.5;
+        Self::scan_text_buckets(content_stream)
+    }
+
+    /// The bucketing of `scan_placed_text`, without the tag gate.
+    fn scan_text_buckets(content_stream: &[u8]) -> Option<PlacedScan> {
+        let operators = parse_content_stream(content_stream).ok()?;
 
         let mut placed_stack: Vec<bool> = Vec::new();
-        let mut placed_chars: usize = 0;
-        let mut other_chars: usize = 0;
-        let mut placed_txt: Vec<u8> = Vec::new();
-        let mut other_txt: Vec<u8> = Vec::new();
+        let mut scan = PlacedScan::default();
         let inside = |stack: &[bool]| stack.iter().any(|&p| p);
         for op in &operators {
             match op {
@@ -98,44 +134,49 @@ impl<'doc> TextExtractor<'doc> {
                 Operator::EndMarkedContent => {
                     placed_stack.pop();
                 }
-                Operator::Tj { text } | Operator::Quote { text } => {
-                    let (chars, txt) = if inside(&placed_stack) {
-                        (&mut placed_chars, &mut placed_txt)
+                Operator::Tj { text } | Operator::Quote { text } | Operator::DoubleQuote { text, .. } => {
+                    let bucket = if inside(&placed_stack) {
+                        &mut scan.placed
                     } else {
-                        (&mut other_chars, &mut other_txt)
+                        &mut scan.other
                     };
-                    *chars += text.len();
-                    txt.extend_from_slice(text);
-                    txt.push(b' ');
-                }
-                Operator::DoubleQuote { text, .. } => {
-                    let (chars, txt) = if inside(&placed_stack) {
-                        (&mut placed_chars, &mut placed_txt)
-                    } else {
-                        (&mut other_chars, &mut other_txt)
-                    };
-                    *chars += text.len();
-                    txt.extend_from_slice(text);
-                    txt.push(b' ');
+                    bucket.chars += text.len();
+                    bucket.txt.extend_from_slice(text);
+                    bucket.txt.push(b' ');
                 }
                 Operator::TJ { array } => {
-                    let (chars, txt) = if inside(&placed_stack) {
-                        (&mut placed_chars, &mut placed_txt)
+                    let bucket = if inside(&placed_stack) {
+                        &mut scan.placed
                     } else {
-                        (&mut other_chars, &mut other_txt)
+                        &mut scan.other
                     };
                     for e in array {
                         if let TextElement::String(s) = e {
-                            *chars += s.len();
-                            txt.extend_from_slice(s);
+                            bucket.chars += s.len();
+                            bucket.txt.extend_from_slice(s);
                         }
                     }
-                    txt.push(b' ');
+                    bucket.txt.push(b' ');
                 }
                 _ => {}
             }
         }
+        Some(scan)
+    }
 
+    /// Apply the keep/suppress gates to a scan. `outside` is text of the
+    /// enclosing page that the scanned stream does not hold; it counts as
+    /// non-placed text of the scanned stream.
+    pub(super) fn placed_scan_dominates(scan: &PlacedScan, outside: &PlacedBucket) -> bool {
+        // A substantial placed body; below this a placed region is treated as a
+        // decorative figure, not the page's logical content. ~keep
+        const MIN_PLACED_CHARS: usize = 800;
+        // Keep placed text whose words are mostly unique; suppress it once a
+        // majority is also present in the non-placed text (a duplicate overlay). ~keep
+        const MAX_DUP_FRACTION: f64 = 0.5;
+
+        let placed_chars = scan.placed.chars;
+        let other_chars = scan.other.chars.saturating_add(outside.chars);
         if placed_chars < MIN_PLACED_CHARS {
             return false;
         }
@@ -146,7 +187,9 @@ impl<'doc> TextExtractor<'doc> {
         // or larger. Keep it unless a majority of the placed words also appear
         // outside (a duplicate overlay). Tokenising here (behind gates 1 and 2)
         // keeps the common single-column path allocation-free. ~keep
-        Self::text_duplication_fraction(&placed_txt, &other_txt) < MAX_DUP_FRACTION
+        let mut other_txt = scan.other.txt.clone();
+        other_txt.extend_from_slice(&outside.txt);
+        Self::text_duplication_fraction(&scan.placed.txt, &other_txt) < MAX_DUP_FRACTION
     }
 
     /// Fraction of alphanumeric word tokens in `a` (counting repeats) that also

@@ -73,7 +73,7 @@ impl<'doc> TextExtractor<'doc> {
         self.extract_spans = true;
         self.spans.clear();
         self.span_sequence_counter = 0;
-        self.placed_pdf_keep = Self::placed_pdf_text_dominates(content_stream);
+        self.begin_page_placed_scan(content_stream);
 
         extract_log_debug!("Parsing content stream for text extraction");
         self.run_content_stream(content_stream)?;
@@ -209,7 +209,7 @@ impl<'doc> TextExtractor<'doc> {
         self.extract_spans = false;
         self.chars.clear();
         self.spans.clear(); // Ensure spans are clear so they don't poison xobject_spans_cache ~keep
-        self.placed_pdf_keep = Self::placed_pdf_text_dominates(content_stream);
+        self.begin_page_placed_scan(content_stream);
 
         self.run_content_stream(content_stream)?;
 
