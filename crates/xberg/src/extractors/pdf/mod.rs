@@ -18,6 +18,7 @@ pub(crate) mod reading_order;
 mod region_vlm;
 #[cfg(feature = "pdf")]
 pub(crate) mod rotation;
+mod unmapped_glyphs;
 
 use crate::Result;
 use crate::core::config::ExtractionConfig;
