@@ -98,6 +98,10 @@ jobs:
         run: mise run release:test:contracts
       - name: Test Python archive publication
         run: mise run python:publish:archive:test
+      # ~keep Runs after the step above: its `uv run --frozen --only-dev` syncs the root venv
+      # that this task's `uv run --no-sync` reuses.
+      - name: Test the layout-annotation importer
+        run: mise run benchmark:validate:layout-annotations
       - name: Test the fixture generator
         run: mise run fixtures:test
       - name: Test the classic OCR cache acceptance harness
@@ -144,10 +148,7 @@ jobs:
         run: |
           ai-rulez verify --plugin
       - name: Verify OpenCode tools and packed Pi resources
-        run: |
-          node --test scripts/tests/opencode-plugin.test.mjs
-          python3 scripts/verify_pi_package.py
-          python3 scripts/tests/test_verify_pi_package.py
+        run: mise run plugin:test
 
       - name: Validate Hermes distribution metadata
         shell: bash
