@@ -68,7 +68,8 @@ use super::rendering::{
 use super::scoring::{
     NativeTextStats, OcrPageNoiseVerdict, OcrPageSignals, accept_or_reject_ocr_page_counting_pruned,
     compute_quality_score, mean_text_conf_of, ocr_content_is_repairable_prose, page_ocr_confidence,
-    pipeline_stage_score, pruned_words_of, repair_ocr_list_markers, repair_ocr_numeric_tokens, word_count_of,
+    pipeline_stage_score, pruned_text_of, repair_ocr_list_markers, repair_ocr_numeric_tokens, with_pruned_text,
+    word_count_of,
 };
 #[cfg(all(any(feature = "ocr", feature = "ocr-pipeline"), feature = "pdf"))]
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -890,9 +891,9 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
     // the per-page metadata is gone by the time `ocr_results` is judged.
     let mut page_mean_confidence: ahash::AHashMap<u32, f64> = ahash::AHashMap::new();
     let mut page_dictionary_invalid_word_ratio: ahash::AHashMap<u32, f64> = ahash::AHashMap::new();
-    // Words of the lines that Tesseract's confidence rule removed, per page: the verdict judges the
-    // page as the engine returned it (GH#2312, GH#2311). ~keep
-    let mut page_pruned_words: ahash::AHashMap<u32, crate::types::internal::OcrPrunedWords> = ahash::AHashMap::new();
+    // Text of the lines that Tesseract's confidence rule removed, per page: the verdict and the image
+    // retry trigger judge the page as the engine returned it (GH#2312, GH#2311). ~keep
+    let mut page_pruned_text: ahash::AHashMap<u32, String> = ahash::AHashMap::new();
     // Collected next to `page_mean_confidence` for the same reason: the per-page metadata is
     // gone by the time the summary attached to `PageContent.ocr_confidence` is built (#1568). ~keep
     let mut page_word_count: ahash::AHashMap<u32, u32> = ahash::AHashMap::new();
@@ -1018,6 +1019,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                         known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
+                        pruned_text_sink: None,
                     };
                     // See `extract_with_ocr_for_page`'s doc comment on
                     // `points_per_pixel_override`: this call hands the stage a single
@@ -1177,6 +1179,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                         known_full_page_scan: crate::pdf::scan_detect::full_page_raster_density(&render_doc, *page_idx)
                             .is_some(),
                         single_block_pages: Some(std::sync::Arc::clone(&single_block_pages)),
+                        pruned_text_sink: None,
                     };
                     let points_per_pixel_override = {
                         let (_, page_height_pt) = page_dimensions_pt(&render_doc, *page_idx);
@@ -1539,8 +1542,8 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 {
                     page_dictionary_invalid_word_ratio.insert((page_idx + 1) as u32, ratio);
                 }
-                if let Some(pruned) = pruned_words_of(extraction_result.ocr_internal_document.as_ref()) {
-                    page_pruned_words.insert((page_idx + 1) as u32, pruned);
+                if let Some(pruned) = pruned_text_of(extraction_result.ocr_internal_document.as_ref()) {
+                    page_pruned_text.insert((page_idx + 1) as u32, pruned);
                 }
                 ocr_results.insert((page_idx + 1) as u32, extraction_result.content);
             }
@@ -1677,8 +1680,8 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                 {
                     page_dictionary_invalid_word_ratio.insert((*page_idx + 1) as u32, ratio);
                 }
-                if let Some(pruned) = pruned_words_of(extraction_result.ocr_internal_document.as_ref()) {
-                    page_pruned_words.insert((*page_idx + 1) as u32, pruned);
+                if let Some(pruned) = pruned_text_of(extraction_result.ocr_internal_document.as_ref()) {
+                    page_pruned_text.insert((*page_idx + 1) as u32, pruned);
                 }
                 ocr_results.insert((*page_idx + 1) as u32, extraction_result.content);
             }
@@ -1690,8 +1693,13 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
         for (page_idx, png, _, _) in &encoded {
             let page_number = (page_idx + 1) as u32;
             let failure = failed_pages.remove(page_idx);
-            let page_text = ocr_results.get(&page_number).map_or("", String::as_str);
-            let trigger = page_needs_xobject_fallback(page_text, png, security_limits);
+            // The retry judges the text the engine returned: a page whose lines were all removed is
+            // not blank (GH#2312).
+            let page_text = with_pruned_text(
+                ocr_results.get(&page_number).map_or("", String::as_str),
+                page_pruned_text.get(&page_number).map(String::as_str),
+            );
+            let trigger = page_needs_xobject_fallback(&page_text, png, security_limits);
             let recovery = if trigger.needs_fallback {
                 recover_page_text_from_image_xobjects(
                     backend,
@@ -1732,7 +1740,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                     page_mean_confidence.remove(&page_number);
                     page_word_count.remove(&page_number);
                     page_dictionary_invalid_word_ratio.remove(&page_number);
-                    page_pruned_words.remove(&page_number);
+                    page_pruned_text.remove(&page_number);
                     // The recovered tables print themselves beside these paragraphs (#2014).
                     structured_ocr_pages.insert(
                         page_number,
@@ -1839,7 +1847,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
         for (page_number, text) in &mut ocr_results {
             let confidence = page_mean_confidence.get(page_number).copied();
             let dictionary_ratio = page_dictionary_invalid_word_ratio.get(page_number).copied();
-            let pruned_words = page_pruned_words.get(page_number);
+            let pruned_text = page_pruned_text.get(page_number).map(String::as_str);
             tracing::debug!(page = *page_number, ?confidence, "OCR page mean confidence");
             // Recorded before the accept/reject call below, and never retracted afterwards: a
             // page the noise gate discards was still OCR'd, and its confidence is exactly the
@@ -1861,7 +1869,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
                     dict_invalid_word_ratio: dictionary_ratio,
                     confidence_semantics,
                     confidence,
-                    pruned: pruned_words,
+                    pruned_text,
                 },
             );
             *text = acceptance.content;
@@ -2320,6 +2328,10 @@ pub(crate) struct PageOcrHints {
     pub(crate) known_full_page_scan: bool,
     /// One-indexed document page numbers selected by automatic fabricated-map routing.
     pub(crate) single_block_pages: Option<std::sync::Arc<std::collections::HashSet<u32>>>,
+    /// Receives the text of the lines the confidence rule removed from each page a run reads. A
+    /// pipeline scores the stage on the kept text plus this text, so the removal cannot change
+    /// which stage wins (GH#2312). ~keep
+    pub(crate) pruned_text_sink: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
 }
 
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -3378,8 +3390,19 @@ pub(super) async fn extract_with_ocr_for_page(
             // Set when the embedded-image retry ran (attempted at least one image) but the
             // backend returned successfully with empty content on every one of them (#1673).
             let mut xobject_retry_ran_empty = false;
-            let xobject_trigger =
-                page_needs_xobject_fallback(&ocr_result.content, encoded_batch[offset].1.as_slice(), security_limits);
+            // The trigger reads the text the engine returned, with the removed lines put back (GH#2312).
+            let xobject_trigger_text = with_pruned_text(
+                &ocr_result.content,
+                ocr_result
+                    .ocr_internal_document
+                    .as_ref()
+                    .map(|document| document.ocr_pruned_text.as_str()),
+            );
+            let xobject_trigger = page_needs_xobject_fallback(
+                &xobject_trigger_text,
+                encoded_batch[offset].1.as_slice(),
+                security_limits,
+            );
             if xobject_trigger.needs_fallback {
                 // The layout-detection route hands in pre-rendered `images`, which leaves
                 // `lazy_pdf_render_state` unopened; that used to disable this fallback
@@ -3696,7 +3719,7 @@ pub(super) async fn extract_with_ocr_for_page(
                     .get(crate::ocr_metadata_keys::OCR_TESSERACT_DICT_INVALID_WORD_RATIO_METADATA_KEY)
                     .and_then(|v| v.as_f64());
                 let confidence = mean_text_conf_of(&ocr_result.metadata.additional);
-                let pruned_counts = pruned_words_of(ocr_result.ocr_internal_document.as_ref());
+                let pruned_text = pruned_text_of(ocr_result.ocr_internal_document.as_ref());
                 if let Some(summary) = page_ocr_confidence(
                     backend_confidence_semantics,
                     confidence,
@@ -3720,12 +3743,21 @@ pub(super) async fn extract_with_ocr_for_page(
                 let page_content = margin_filtered_content.unwrap_or(ocr_result.content);
                 #[cfg(not(feature = "pdf"))]
                 let page_content = ocr_result.content;
-                // The page is judged as the engine returned it: the words of removed lines count (GH#2312).
-                let pruned_words = if margin_filtered_content_applied {
+                // The page is judged as the engine returned it: the removed lines count (GH#2312).
+                let pruned_text = if margin_filtered_content_applied {
                     None
                 } else {
-                    pruned_counts
+                    pruned_text
                 };
+                if let Some(text) = pruned_text.as_ref()
+                    && let Some(sink) = page_ocr_hints
+                        .as_ref()
+                        .and_then(|hints| hints.pruned_text_sink.as_ref())
+                {
+                    sink.lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(text.clone());
+                }
                 let acceptance = accept_or_reject_ocr_page_counting_pruned(
                     document_page_idx,
                     page_content,
@@ -3735,7 +3767,7 @@ pub(super) async fn extract_with_ocr_for_page(
                         dict_invalid_word_ratio,
                         confidence_semantics: backend_confidence_semantics,
                         confidence,
-                        pruned: pruned_words.as_ref(),
+                        pruned_text: pruned_text.as_deref(),
                     },
                 );
                 page_texts[page_idx] = acceptance.content;
@@ -3792,7 +3824,7 @@ pub(super) async fn extract_with_ocr_for_page(
                 .get(crate::ocr_metadata_keys::OCR_TESSERACT_DICT_INVALID_WORD_RATIO_METADATA_KEY)
                 .and_then(|v| v.as_f64());
             let confidence = mean_text_conf_of(&ocr_result.metadata.additional);
-            let pruned_counts = pruned_words_of(ocr_result.ocr_internal_document.as_ref());
+            let pruned_text = pruned_text_of(ocr_result.ocr_internal_document.as_ref());
             if let Some(summary) = page_ocr_confidence(
                 backend_confidence_semantics,
                 confidence,
@@ -3816,12 +3848,21 @@ pub(super) async fn extract_with_ocr_for_page(
             let page_content = margin_filtered_content.unwrap_or(ocr_result.content);
             #[cfg(not(feature = "pdf"))]
             let page_content = ocr_result.content;
-            // The page is judged as the engine returned it: the words of removed lines count (GH#2312).
-            let pruned_words = if margin_filtered_content_applied {
+            // The page is judged as the engine returned it: the removed lines count (GH#2312).
+            let pruned_text = if margin_filtered_content_applied {
                 None
             } else {
-                pruned_counts
+                pruned_text
             };
+            if let Some(text) = pruned_text.as_ref()
+                && let Some(sink) = page_ocr_hints
+                    .as_ref()
+                    .and_then(|hints| hints.pruned_text_sink.as_ref())
+            {
+                sink.lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(text.clone());
+            }
             let acceptance = accept_or_reject_ocr_page_counting_pruned(
                 document_page_idx,
                 page_content,
@@ -3831,7 +3872,7 @@ pub(super) async fn extract_with_ocr_for_page(
                     dict_invalid_word_ratio,
                     confidence_semantics: backend_confidence_semantics,
                     confidence,
-                    pruned: pruned_words.as_ref(),
+                    pruned_text: pruned_text.as_deref(),
                 },
             );
             page_texts[page_idx] = acceptance.content;
@@ -5091,6 +5132,7 @@ async fn run_ocr_pipeline_stages(
         ahash::AHashMap<u32, crate::types::page::PageOcrConfidence>,
     )> = None;
 
+    let mut best_selection_text: Option<String> = None;
     let mut accumulated_usage: Vec<crate::types::LlmUsage> = Vec::new();
     // Track stages that errored outright (e.g. a VLM fallback that failed
     // authentication) so the failure is surfaced to the caller instead of being
@@ -5125,6 +5167,19 @@ async fn run_ocr_pipeline_stages(
             "Pipeline: trying OCR backend"
         );
 
+        // The stage is scored on what the engine returned: the kept text plus the lines that the
+        // confidence rule removed, which each page run reports through the sink (GH#2312).
+        let pruned_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let stage_hints = {
+            let mut hints = inputs.page_ocr_hints.clone().unwrap_or(PageOcrHints {
+                source_dpi: None,
+                known_full_page_scan: false,
+                single_block_pages: None,
+                pruned_text_sink: None,
+            });
+            hints.pruned_text_sink = Some(pruned_lines.clone());
+            hints
+        };
         let result = Box::pin(extract_with_ocr_for_page(
             inputs.content,
             inputs.images,
@@ -5135,7 +5190,7 @@ async fn run_ocr_pipeline_stages(
             inputs.page_rotation_degrees,
             inputs.skip_document_global_heuristic,
             inputs.points_per_pixel_override,
-            inputs.page_ocr_hints.clone(),
+            Some(stage_hints),
             inputs.page_index_offset,
             inputs.xobject_document,
         ))
@@ -5157,7 +5212,12 @@ async fn run_ocr_pipeline_stages(
                 stage_ocr_confidence,
                 stage_recognition_noise_verdicts,
             )) => {
-                let text_score = compute_quality_score(&text, &pipeline.quality_thresholds);
+                let pruned_stage_text = pruned_lines
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .join("\n");
+                let selection_text = with_pruned_text(&text, Some(&pruned_stage_text)).into_owned();
+                let text_score = compute_quality_score(&selection_text, &pipeline.quality_thresholds);
                 let score = pipeline_stage_score(text_score, mean_conf);
 
                 tracing::debug!(
@@ -5228,15 +5288,16 @@ async fn run_ocr_pipeline_stages(
                 // non-empty one that is a materially worse replacement for an already-dense
                 // incumbent (F46).
                 let best_score = best_result.as_ref().map(|(_, best_score, ..)| *best_score);
-                let best_text = best_result.as_ref().map(|(text, ..)| text.as_str());
+                let best_text = best_selection_text.as_deref();
                 if should_replace_best_effort_result(
                     selection,
                     best_score,
                     best_text,
-                    &text,
+                    &selection_text,
                     score,
                     &pipeline.quality_thresholds,
                 ) {
+                    best_selection_text = Some(selection_text);
                     best_result = Some((
                         text,
                         score,

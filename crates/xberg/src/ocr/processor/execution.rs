@@ -601,6 +601,34 @@ impl TableRegion {
     /// relies on. ~keep
     fn drop_shading_marks(&mut self, row_threshold_ratio: f64) {
         let keep = shading_mark_keep_mask(&self.read_boxes, row_threshold_ratio);
+        self.retain_by_mask(&keep);
+    }
+
+    /// Drop the words that sit in an hOCR line the confidence rule removed (#2312), so a removed
+    /// line does not come back as table cells. The match is the box Tesseract read: the TSV box
+    /// and the hOCR word box come from the same recognition. A dropped word changes the cells,
+    /// never whether a table is attempted (GH#1858), for the same reason as the marks. ~keep
+    fn drop_pruned_words(&mut self, pruned_boxes: &[(u32, u32, u32, u32)]) {
+        if pruned_boxes.is_empty() {
+            return;
+        }
+        let keep: Vec<bool> = self
+            .read_boxes
+            .iter()
+            .map(|word| {
+                let read = (
+                    word.left,
+                    word.top,
+                    word.left.saturating_add(word.width),
+                    word.top.saturating_add(word.height),
+                );
+                !pruned_boxes.contains(&read)
+            })
+            .collect();
+        self.retain_by_mask(&keep);
+    }
+
+    fn retain_by_mask(&mut self, keep: &[bool]) {
         debug_assert_eq!(
             self.words.len(),
             self.read_boxes.len(),
@@ -608,13 +636,13 @@ impl TableRegion {
         );
         self.words = std::mem::take(&mut self.words)
             .into_iter()
-            .zip(&keep)
+            .zip(keep)
             .filter(|(_, keep)| **keep)
             .map(|(word, _)| word)
             .collect();
         self.read_boxes = std::mem::take(&mut self.read_boxes)
             .into_iter()
-            .zip(&keep)
+            .zip(keep)
             .filter(|(_, keep)| **keep)
             .map(|(word, _)| word)
             .collect();
@@ -2131,6 +2159,7 @@ pub(super) fn perform_ocr(
     let mut hocr_document: Option<InternalDocument> = None;
     let mut dictionary_filtered_line_count = 0usize;
     let mut retained_hocr_confidence_stats = None;
+    let mut pruned_word_boxes: Vec<(u32, u32, u32, u32)> = Vec::new();
 
     let (raw_content, mime_type) = match config.output_format.as_str() {
         "text" => {
@@ -2148,10 +2177,12 @@ pub(super) fn perform_ocr(
             let parse_result = parse_page_hocr(&hocr, &is_valid_word, config);
             dictionary_filtered_line_count = parse_result.dictionary_filtered_line_count;
             let content = flatten_hocr_elements_to_text(&parse_result.document.elements);
-            // The removed lines' word counts travel on the document, not in the metadata: they
-            // are for the page verdict and must not reach the public output (#2312).
+            // The removed lines' text travels on the document, not in the metadata: the stage score,
+            // the retry trigger and the page verdict read it, and it must not reach the public
+            // output (#2312).
             let mut document = parse_result.document;
-            document.ocr_pruned_words = parse_result.retained_word_confidence_stats.pruned_words();
+            document.ocr_pruned_text = parse_result.retained_word_confidence_stats.pruned_text().to_string();
+            pruned_word_boxes = parse_result.retained_word_confidence_stats.pruned_word_boxes().to_vec();
             retained_hocr_confidence_stats = Some(parse_result.retained_word_confidence_stats);
             hocr_document = Some(document);
 
@@ -2346,6 +2377,7 @@ pub(super) fn perform_ocr(
             // dropped, so a dropped mark changes a table's cells but never whether a table is
             // attempted at all (GH#1858). ~keep
             region.drop_shading_marks(config.table_row_threshold_ratio);
+            region.drop_pruned_words(&pruned_word_boxes);
             if config
                 .preprocessing
                 .as_ref()
@@ -3710,6 +3742,32 @@ mod tests {
         words
     }
 
+    /// A word whose hOCR line the confidence rule removed does not enter a table region, matched by
+    /// the box Tesseract read. A word with another box, and a word with the same text elsewhere,
+    /// stay. The vectors stay parallel.
+    #[test]
+    fn a_region_drops_the_words_of_removed_lines_by_their_read_box() {
+        let words = vec![
+            word_at(10, 50, 30, 30, "ii"),
+            word_at(50, 50, 30, 30, "Il"),
+            word_at(10, 90, 30, 30, "ii"),
+            word_at(50, 90, 30, 30, "Total"),
+        ];
+        let mut region = TableRegion {
+            words: words.clone(),
+            read_boxes: words,
+        };
+
+        region.drop_pruned_words(&[(10, 50, 40, 80), (50, 50, 80, 80)]);
+
+        let kept: Vec<(&str, u32)> = region.words.iter().map(|w| (w.text.as_str(), w.top)).collect();
+        assert_eq!(kept, vec![("ii", 90), ("Total", 90)]);
+        assert_eq!(region.read_boxes.len(), region.words.len());
+
+        region.drop_pruned_words(&[]);
+        assert_eq!(region.words.len(), 2, "no removed box leaves the region as it is");
+    }
+
     #[test]
     fn a_region_counts_its_words_before_its_marks_are_dropped() {
         let at_minimum = value_row_with_a_mark(MIN_TABLE_CANDIDATE_WORDS as u32 - 1);
@@ -4574,8 +4632,8 @@ mod tests {
 
     /// The page OCR applies the confidence rule at the configured floor (#2312): the line of
     /// fragments goes, the sentence stays, the low line with a dictionary word stays, and the
-    /// words of the removed line are counted for the page verdict. With the floor at zero the
-    /// same page keeps every line and counts nothing.
+    /// text of the removed line is kept for the page verdict. With the floor at zero the
+    /// same page keeps every line and keeps no removed text.
     #[test]
     fn page_ocr_removes_low_confidence_fragment_lines_at_the_configured_floor() {
         let off = parse_photo_page(0.0);
@@ -4587,17 +4645,14 @@ mod tests {
             off_text.contains("vkl"),
             "control: a zero floor keeps the fragments: {off_text:?}"
         );
-        assert_eq!(
-            off.retained_word_confidence_stats.pruned_words(),
-            crate::types::internal::OcrPrunedWords::default()
-        );
+        assert_eq!(off.retained_word_confidence_stats.pruned_text(), "");
         assert!(on_text.contains("Cook meat and eggs"), "kept: {on_text:?}");
         assert!(
             on_text.contains("qzx meat"),
             "a line with a dictionary word is kept: {on_text:?}"
         );
         assert!(!on_text.contains("vkl"), "fragments removed: {on_text:?}");
-        assert_eq!(on.retained_word_confidence_stats.pruned_words().words, 3);
+        assert_eq!(on.retained_word_confidence_stats.pruned_text(), "qzx vkl wrt");
     }
 
     /// Lines OCR read in the secondary language of a `lang1+lang2` run must survive the

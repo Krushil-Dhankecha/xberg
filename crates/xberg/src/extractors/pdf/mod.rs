@@ -2233,6 +2233,7 @@ fn automatic_unmapped_text_hints(metadata: &crate::pdf::metadata::PdfExtractionM
         source_dpi: None,
         known_full_page_scan: false,
         single_block_pages: Some(std::sync::Arc::new(pages.iter().copied().collect())),
+        pruned_text_sink: None,
     })
 }
 

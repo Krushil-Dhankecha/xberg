@@ -4,7 +4,7 @@ use crate::cache::version::cache_version_tag;
 use crate::core::config::OutputFormat;
 use crate::telemetry::conventions;
 use crate::types::OcrExtractionResult;
-use crate::types::internal::{InternalDocument, OcrPrunedWords};
+use crate::types::internal::InternalDocument;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -30,9 +30,9 @@ struct CachedOcrResult {
     /// The document field of the same name, which its own `Serialize` impl skips.
     #[serde(default)]
     ocr_text_claimed_by_tables: bool,
-    /// The same for the words of the lines the confidence rule removed (#2312).
+    /// The same for the text of the lines the confidence rule removed (#2312).
     #[serde(default)]
-    ocr_pruned_words: [usize; 3],
+    ocr_pruned_text: String,
 }
 
 /// Borrowing counterpart of [`CachedOcrResult`] used on the write path.
@@ -46,7 +46,7 @@ struct CachedOcrResultRef<'a> {
     result: &'a OcrExtractionResult,
     internal_document: &'a Option<InternalDocument>,
     ocr_text_claimed_by_tables: bool,
-    ocr_pruned_words: [usize; 3],
+    ocr_pruned_text: &'a str,
 }
 
 impl CachedOcrResult {
@@ -56,8 +56,7 @@ impl CachedOcrResult {
         result.internal_document = self.internal_document;
         if let Some(document) = result.internal_document.as_mut() {
             document.ocr_text_claimed_by_tables = self.ocr_text_claimed_by_tables;
-            let [words, scorable, short] = self.ocr_pruned_words;
-            document.ocr_pruned_words = OcrPrunedWords { words, scorable, short };
+            document.ocr_pruned_text = self.ocr_pruned_text;
         }
         result
     }
@@ -172,10 +171,10 @@ impl OcrCache {
                 .internal_document
                 .as_ref()
                 .is_some_and(|document| document.ocr_text_claimed_by_tables),
-            ocr_pruned_words: result.internal_document.as_ref().map_or([0; 3], |document| {
-                let p = document.ocr_pruned_words;
-                [p.words, p.scorable, p.short]
-            }),
+            ocr_pruned_text: result
+                .internal_document
+                .as_ref()
+                .map_or("", |document| document.ocr_pruned_text.as_str()),
         };
         rmp_serde::to_vec_named(&envelope).map_err(|e| {
             tracing::warn!(
@@ -861,17 +860,13 @@ mod tests {
     }
 
     #[test]
-    fn cached_result_should_preserve_the_words_of_the_lines_the_confidence_rule_removed() {
+    fn cached_result_should_preserve_the_text_of_the_lines_the_confidence_rule_removed() {
         let temp_dir = tempfile::tempdir().unwrap();
         let cache = OcrCache::new(Some(temp_dir.path().to_path_buf())).unwrap();
         let mut original = result_with_internal_document();
-        let removed = OcrPrunedWords {
-            words: 16,
-            scorable: 14,
-            short: 12,
-        };
+        let removed = "ii Il x\nqz vk".to_string();
         if let Some(document) = original.internal_document.as_mut() {
-            document.ocr_pruned_words = removed;
+            document.ocr_pruned_text = removed.clone();
         }
         cache
             .set_cached_result("img", "tesseract", "eng", None, &original)
@@ -886,7 +881,7 @@ mod tests {
             cached
                 .internal_document
                 .expect("the structured document")
-                .ocr_pruned_words,
+                .ocr_pruned_text,
             removed
         );
     }

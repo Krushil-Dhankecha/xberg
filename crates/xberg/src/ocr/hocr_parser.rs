@@ -20,7 +20,7 @@ use memchr::memchr;
 
 use crate::ocr::table::tsv_parser::text_without_underscore_marks;
 use crate::types::extraction::BoundingBox;
-use crate::types::internal::{ElementKind, InternalDocument, InternalElement, OcrPrunedWords};
+use crate::types::internal::{ElementKind, InternalDocument, InternalElement};
 use crate::types::ocr_elements::{OcrBoundingGeometry, OcrConfidence, OcrElementLevel};
 
 /// Attribute used to retain the logical hOCR block enclosing an `ocr_par`.
@@ -105,7 +105,10 @@ pub(crate) struct RetainedWordConfidenceStats {
     count: usize,
     sum: u64,
     low_confidence_count: usize,
-    pruned: OcrPrunedWords,
+    /// The text of the lines the confidence rule removed, one line per row.
+    pruned_text: String,
+    /// The boxes (left, top, right, bottom) of the words of those lines, as Tesseract read them.
+    pruned_word_boxes: Vec<(u32, u32, u32, u32)>,
 }
 
 impl Default for RetainedWordConfidenceStats {
@@ -115,27 +118,29 @@ impl Default for RetainedWordConfidenceStats {
             count: 0,
             sum: 0,
             low_confidence_count: 0,
-            pruned: OcrPrunedWords::default(),
+            pruned_text: String::new(),
+            pruned_word_boxes: Vec::new(),
         }
     }
 }
 
 impl RetainedWordConfidenceStats {
-    pub(crate) fn pruned_words(&self) -> OcrPrunedWords {
-        self.pruned
+    pub(crate) fn pruned_text(&self) -> &str {
+        &self.pruned_text
+    }
+
+    pub(crate) fn pruned_word_boxes(&self) -> &[(u32, u32, u32, u32)] {
+        &self.pruned_word_boxes
     }
 
     fn record_pruned_line(&mut self, line: &HocrLineInfo) {
-        let text = line.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
-        for token in text.split_whitespace() {
-            self.pruned.words += 1;
-            if token.chars().any(char::is_alphabetic) {
-                self.pruned.scorable += 1;
-                if token.len() <= 2 {
-                    self.pruned.short += 1;
-                }
-            }
+        if !self.pruned_text.is_empty() {
+            self.pruned_text.push('\n');
         }
+        let text = line.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+        self.pruned_text.push_str(&text);
+        self.pruned_word_boxes
+            .extend(line.words.iter().map(|w| (w.x0, w.y0, w.x1, w.y1)));
     }
 
     pub(crate) fn record(&mut self, confidence: f64) {
@@ -572,16 +577,54 @@ fn is_dictionary_noise_line(line: &HocrLineInfo, filter: &DictionaryLineFilter<'
     (invalid as f64 / candidates as f64) > filter.max_invalid_ratio
 }
 
-/// Whether a line is photo noise by confidence: no dictionary word, and a mean word
+/// The core of an OCR token: edge characters that are not letters or digits are trimmed, then a
+/// trailing possessive (`'s` or `’s`). `word's`, `word,` and `(word)` all give `word`. ~keep
+fn token_core(token: &str) -> &str {
+    let trimmed = token.trim_matches(|c: char| !c.is_alphanumeric());
+    trimmed
+        .strip_suffix("'s")
+        .or_else(|| trimmed.strip_suffix("\u{2019}s"))
+        .unwrap_or(trimmed)
+}
+
+/// Whether a token is a number: digits with an optional sign, currency symbol, grouping
+/// separators, decimal point, percent sign, or one or two trailing unit letters (`$1,234.56`,
+/// `12%`, `-3.5`, `12kg`).
+fn is_number_token(token: &str) -> bool {
+    let t = token.trim_start_matches(['(', '+', '-', '\u{2212}', '$', '\u{20ac}', '\u{a3}', '\u{a5}']);
+    let t = t.trim_end_matches([')', '%', '.', ',', ';', ':']);
+    let chars: Vec<char> = t.chars().collect();
+    let unit_letters = chars.iter().rev().take_while(|c| c.is_alphabetic()).count();
+    let digits = &chars[..chars.len() - if unit_letters <= 2 { unit_letters } else { 0 }];
+    digits.first().is_some_and(char::is_ascii_digit)
+        && digits.last().is_some_and(char::is_ascii_digit)
+        && digits
+            .iter()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '\'' | '\u{2019}'))
+}
+
+/// Whether one OCR token is content: a number, or a real word (a dictionary word of at least
+/// [`MIN_WORD_LEN_FOR_DICT_CHECK`] letters once the edge punctuation and a possessive are trimmed).
+fn is_plausible_token(token: &str, is_valid_word: &dyn Fn(&str) -> Option<bool>) -> bool {
+    if is_number_token(token) {
+        return true;
+    }
+    let core = token_core(token);
+    core.chars().count() >= MIN_WORD_LEN_FOR_DICT_CHECK
+        && core.chars().all(|c| c.is_alphabetic())
+        && is_valid_word(core) == Some(true)
+}
+
+/// Whether a line is photo noise by confidence: no real word and no number, and a mean word
 /// confidence under [`DictionaryLineFilter::min_line_confidence`] (#2312).
 ///
 /// The dictionary check in [`is_dictionary_noise_line`] cannot see a noise line that holds
 /// only one or two character fragments: it has no checkable word, so the line never reaches
 /// the ratio. The engine's own uncertainty does separate those lines from real text.
 ///
-/// A line with any dictionary word is never dropped here, whatever its confidence: a real
-/// label that the engine read with doubt (a map label) stays. A line whose words carry no
-/// confidence value stays too, because nothing was measured.
+/// A line with any plausible token is never dropped here, whatever its confidence: a real
+/// label that the engine read with doubt (a map label, a figure in a table) stays. A line whose
+/// words carry no confidence value stays too, because nothing was measured.
 fn is_low_confidence_noise_line(line: &HocrLineInfo, filter: &DictionaryLineFilter<'_>) -> bool {
     if filter.min_line_confidence <= 0.0 {
         return false;
@@ -597,12 +640,10 @@ fn is_low_confidence_noise_line(line: &HocrLineInfo, filter: &DictionaryLineFilt
     if confidence_count == 0 || confidence_sum / confidence_count as f64 >= filter.min_line_confidence {
         return false;
     }
-    !line.words.iter().any(|word| {
-        let text = word.text.trim();
-        text.chars().count() >= MIN_WORD_LEN_FOR_DICT_CHECK
-            && text.chars().all(|c| c.is_alphabetic())
-            && (filter.is_valid_word)(text) == Some(true)
-    })
+    !line
+        .words
+        .iter()
+        .any(|word| is_plausible_token(word.text.trim(), filter.is_valid_word))
 }
 
 /// Attribute key holding the paragraph's average word font size (points, as a
@@ -2582,13 +2623,111 @@ mod tests {
             );
             assert_eq!(with_rule.retained_word_confidence_stats.mean(), Some(55));
             assert_eq!(with_rule.retained_word_confidence_stats.low_confidence_word_count(), 4);
-            // The removed line "ii Il x": three tokens, each with a letter, each of one or two bytes.
-            let pruned = with_rule.retained_word_confidence_stats.pruned_words();
-            assert_eq!((pruned.words, pruned.scorable, pruned.short), (3, 3, 3));
-            assert_eq!(
-                without_rule.retained_word_confidence_stats.pruned_words(),
-                OcrPrunedWords::default()
+            assert_eq!(with_rule.retained_word_confidence_stats.pruned_text(), "ii Il x");
+            assert_eq!(with_rule.retained_word_confidence_stats.pruned_word_boxes().len(), 3);
+            assert_eq!(without_rule.retained_word_confidence_stats.pruned_text(), "");
+        }
+
+        /// The kept text plus the removed text is every word of the page, as the rule off returns
+        /// it. The stage score, the retry trigger and the page verdict read that whole.
+        #[test]
+        fn kept_text_plus_pruned_text_holds_every_word_of_the_unpruned_page() {
+            let off = parse_hocr_to_internal_document_with_page_offset_and_stats(
+                PHOTO_PAGE_HOCR,
+                Some(&confidence_filter(0.0)),
+                1,
             );
+            let on = parse_hocr_to_internal_document_with_page_offset_and_stats(
+                PHOTO_PAGE_HOCR,
+                Some(&confidence_filter(75.0)),
+                1,
+            );
+            let sorted_words = |text: &str| {
+                let mut words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
+                words.sort();
+                words
+            };
+            let kept = on.document.elements[0].text.clone();
+            let joined = format!("{kept}\n{}", on.retained_word_confidence_stats.pruned_text());
+
+            assert_eq!(sorted_words(&joined), sorted_words(&off.document.elements[0].text));
+        }
+
+        /// A word that sits in a removed line is named by its box, so a table cannot take it back.
+        #[test]
+        fn the_removed_words_are_named_by_the_boxes_tesseract_read() {
+            let on = parse_hocr_to_internal_document_with_page_offset_and_stats(
+                PHOTO_PAGE_HOCR,
+                Some(&confidence_filter(75.0)),
+                1,
+            );
+
+            assert_eq!(
+                on.retained_word_confidence_stats.pruned_word_boxes(),
+                &[(10, 50, 40, 80), (50, 50, 80, 80), (90, 50, 120, 80)]
+            );
+        }
+
+        /// The token judgement trims edge punctuation and a possessive before the lookup, and
+        /// counts a number as content.
+        #[test]
+        fn token_plausibility_trims_edges_and_keeps_numbers() {
+            let valid = |word: &str| Some(word == "word");
+            for token in ["word", "word's", "word\u{2019}s", "word,", "(word)", "\\word", "word."] {
+                assert!(is_plausible_token(token, &valid), "{token:?} holds the real word");
+            }
+            assert_eq!(token_core("word's"), "word");
+            assert_eq!(token_core("word\u{2019}s"), "word");
+            assert_eq!(token_core("word,"), "word");
+            assert_eq!(token_core("(word)"), "word");
+            assert_eq!(token_core("\\word"), "word");
+            assert_eq!(token_core("''"), "");
+            assert_eq!(token_core("it's"), "it");
+            // Under three letters, a word is not looked up.
+            assert!(!is_plausible_token("it's", &|_| Some(true)));
+            assert!(!is_plausible_token("''", &|_| Some(true)));
+            // A word the dictionary does not know, and a word it cannot judge, are not content.
+            assert!(!is_plausible_token("qzxv", &valid));
+            assert!(!is_plausible_token("word", &|_| None));
+            for number in ["$1,234.56", "12%", "-3.5", "(42)", "7", "12kg", "3.14,"] {
+                assert!(is_plausible_token(number, &|_| Some(false)), "{number:?} is a number");
+            }
+            for not_number in ["x2", "-", "1a2b3", "...", "ii", "abc"] {
+                assert!(!is_plausible_token(not_number, &|_| Some(false)), "{not_number:?}");
+            }
+        }
+
+        /// A line of digits read under the floor stays: a number is never a dictionary word.
+        #[test]
+        fn a_low_confidence_line_of_numbers_stays() {
+            let hocr = r#"<div class="ocr_page" title="ppageno 0"><p class="ocr_par">
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 10 60 40; x_wconf 30">$1,234.56</span>
+                    <span class="ocrx_word" title="bbox 70 10 120 40; x_wconf 20">12%</span>
+                </span></p></div>"#;
+
+            let result =
+                parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, Some(&confidence_filter(75.0)), 1);
+
+            assert_eq!(result.dictionary_filtered_line_count, 0);
+            assert_eq!(result.document.elements[0].text, "$1,234.56 12%");
+            assert_eq!(result.retained_word_confidence_stats.pruned_text(), "");
+        }
+
+        /// A real word with a possessive or a trailing comma keeps its low-confidence line.
+        #[test]
+        fn a_low_confidence_line_with_a_trimmed_real_word_stays() {
+            let hocr = r#"<div class="ocr_page" title="ppageno 0"><p class="ocr_par">
+                <span class="ocr_line">
+                    <span class="ocrx_word" title="bbox 10 10 60 40; x_wconf 30">Park's</span>
+                    <span class="ocrx_word" title="bbox 70 10 120 40; x_wconf 20">ii</span>
+                </span></p></div>"#;
+
+            let result =
+                parse_hocr_to_internal_document_with_page_offset_and_stats(hocr, Some(&confidence_filter(75.0)), 1);
+
+            assert_eq!(result.dictionary_filtered_line_count, 0);
+            assert_eq!(result.document.elements[0].text, "Park's ii");
         }
 
         /// A threshold of zero turns the rule off, so a caller that sets

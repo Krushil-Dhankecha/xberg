@@ -1,7 +1,5 @@
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 use crate::core::config::OcrQualityThresholds;
-#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-use crate::types::internal::OcrPrunedWords;
 
 /// Minimum average non-whitespace characters per page for extracted text to be treated as
 /// substantive. At or above this, prose-tuned quality checks (fragmentation, avg word length,
@@ -913,11 +911,13 @@ pub(super) fn ocr_recognition_noise_decision(
     thresholds: &OcrQualityThresholds,
     semantics: crate::plugins::ConfidenceSemantics,
     confidence: Option<f64>,
-    pruned: Option<&OcrPrunedWords>,
+    pruned_text: Option<&str>,
 ) -> OcrRecognitionNoiseDecision {
     let low_confidence = confidence_gate_rejects(semantics, confidence, thresholds.min_ocr_mean_confidence);
-    let fragmented_noise =
-        recognition_noise_by_fragmentation(&ocr_output_stats_with_pruned(content, pruned, thresholds), thresholds);
+    let fragmented_noise = recognition_noise_by_fragmentation(
+        &ocr_output_stats_with_pruned(content, pruned_text, thresholds),
+        thresholds,
+    );
     OcrRecognitionNoiseDecision {
         low_confidence,
         fragmented_noise,
@@ -991,55 +991,47 @@ pub(super) fn ocr_output_stats(text: &str, thresholds: &OcrQualityThresholds) ->
     ocr_output_stats_with_pruned(text, None, thresholds)
 }
 
-/// The words of the lines that the Tesseract confidence rule removed from a page (#2312).
+/// The text of the lines that the Tesseract confidence rule removed from a page (#2312).
 ///
-/// The page verdict must judge the text as the engine returned it, before the removal: a
-/// page whose noise lines were removed would otherwise read as clean prose, and a clean text
-/// layer would lose to it (#2311). The OCR layer cannot call this module, so it leaves the
-/// counts on the page's structured document and this module adds them to the counts of the
-/// kept text. The counts follow the definitions in [`NativeTextStats::compute`]. `None` when
-/// no line was removed. ~keep
+/// Every decision that reads OCR text judges the page as the engine returned it: the kept text
+/// plus this text. A page whose noise lines were removed would otherwise read as clean prose, a
+/// clean text layer would lose to it (#2311), and the stage score would move across the stage
+/// threshold. The OCR layer cannot call this module, so it leaves the text on the page's
+/// structured document. `None` when no line was removed. ~keep
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-pub(crate) fn pruned_words_of(document: Option<&crate::types::internal::InternalDocument>) -> Option<OcrPrunedWords> {
-    document.map(|d| d.ocr_pruned_words).filter(|p| p.words > 0)
+pub(crate) fn pruned_text_of(document: Option<&crate::types::internal::InternalDocument>) -> Option<String> {
+    document
+        .map(|d| d.ocr_pruned_text.as_str())
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
 }
 
-/// [`ocr_output_stats`] over the kept text plus the words of the removed lines.
+/// The kept text with the removed lines put back: the text the engine returned, in the
+/// statistics every decision computes.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(crate) fn with_pruned_text<'a>(kept: &'a str, pruned_text: Option<&str>) -> std::borrow::Cow<'a, str> {
+    match pruned_text.filter(|text| !text.is_empty()) {
+        Some(pruned) if kept.trim().is_empty() => std::borrow::Cow::Owned(pruned.to_string()),
+        Some(pruned) => std::borrow::Cow::Owned(format!("{kept}\n{pruned}")),
+        None => std::borrow::Cow::Borrowed(kept),
+    }
+}
+
+/// [`ocr_output_stats`] over the kept text plus the removed lines.
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 pub(super) fn ocr_output_stats_with_pruned(
     text: &str,
-    pruned: Option<&OcrPrunedWords>,
+    pruned_text: Option<&str>,
     thresholds: &OcrQualityThresholds,
 ) -> NativeTextStats {
-    let normalized = normalize_markdown_for_scoring(text.trim());
+    let joined = with_pruned_text(text, pruned_text);
+    let normalized = normalize_markdown_for_scoring(joined.trim());
     let scoring_input = if normalized.trim().is_empty() {
-        text.trim()
+        joined.trim()
     } else {
         normalized.as_str()
     };
-    let mut stats = NativeTextStats::compute(scoring_input, thresholds);
-    let Some(pruned) = pruned else {
-        return stats;
-    };
-    let (mut scorable, mut short) = (0usize, 0usize);
-    for word in scoring_input
-        .split_whitespace()
-        .filter(|w| w.chars().any(char::is_alphabetic))
-    {
-        scorable += 1;
-        if word.len() <= 2 {
-            short += 1;
-        }
-    }
-    scorable += pruned.scorable;
-    short += pruned.short;
-    stats.word_count += pruned.words;
-    stats.fragmented_word_ratio = if stats.word_count >= 10 && scorable > 0 {
-        short as f64 / scorable as f64
-    } else {
-        0.0
-    };
-    stats
+    NativeTextStats::compute(scoring_input, thresholds)
 }
 
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
@@ -1130,8 +1122,8 @@ pub(super) struct OcrPageSignals<'a> {
     pub(super) dict_invalid_word_ratio: Option<f64>,
     pub(super) confidence_semantics: crate::plugins::ConfidenceSemantics,
     pub(super) confidence: Option<f64>,
-    /// The words of the lines the engine removed from the page.
-    pub(super) pruned: Option<&'a OcrPrunedWords>,
+    /// The text of the lines the engine removed from the page.
+    pub(super) pruned_text: Option<&'a str>,
 }
 
 /// [`accept_or_reject_ocr_page_counting_pruned`] for a page with no removed lines.
@@ -1154,7 +1146,7 @@ pub(super) fn accept_or_reject_ocr_page(
             dict_invalid_word_ratio,
             confidence_semantics,
             confidence,
-            pruned: None,
+            pruned_text: None,
         },
     )
 }
@@ -1177,7 +1169,7 @@ pub(super) fn accept_or_reject_ocr_page_counting_pruned(
         dict_invalid_word_ratio,
         confidence_semantics,
         confidence,
-        pruned,
+        pruned_text,
     } = signals;
     if content.trim().is_empty() {
         return OcrPageAcceptance {
@@ -1187,7 +1179,7 @@ pub(super) fn accept_or_reject_ocr_page_counting_pruned(
         };
     }
     let recognition_noise =
-        ocr_recognition_noise_decision(&content, thresholds, confidence_semantics, confidence, pruned);
+        ocr_recognition_noise_decision(&content, thresholds, confidence_semantics, confidence, pruned_text);
     let dictionary_noise = is_dictionary_invalid_noise(dict_invalid_word_ratio, thresholds);
     if !recognition_noise.suspected() && !dictionary_noise {
         return OcrPageAcceptance {
@@ -1197,7 +1189,7 @@ pub(super) fn accept_or_reject_ocr_page_counting_pruned(
         };
     }
     let discarded = thresholds.discard_suspected_ocr_noise;
-    let stats = ocr_output_stats_with_pruned(&content, pruned, thresholds);
+    let stats = ocr_output_stats_with_pruned(&content, pruned_text, thresholds);
     tracing::warn!(
         page = page_index + 1,
         words = stats.word_count,

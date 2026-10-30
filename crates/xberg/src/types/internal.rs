@@ -371,26 +371,10 @@ pub struct InternalDocument {
     #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
     pub ocr_text_claimed_by_tables: bool,
 
-    /// Word counts of the hOCR lines that the confidence rule removed from this page (#2312).
-    /// The page noise verdict adds them back to the kept text, so it judges the page as the
-    /// engine returned it. Never crosses the plugin-bridge JSON wire format and never reaches
-    /// the public output.
+    /// The text of the hOCR lines that the OCR confidence rule removed from this page (#2312), so the stage score, the image retry trigger and the page verdict judge the page as the engine returned it. Never crosses the plugin-bridge JSON wire format and never reaches the public output.
     #[serde(skip)]
     #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-    pub ocr_pruned_words: OcrPrunedWords,
-}
-
-/// Word counts of OCR lines removed from a page, in the terms of the page fragmentation check:
-/// whitespace tokens, tokens with a letter, and letter tokens of at most two bytes.
-// `pub` + alef(skip) for the same reason as `OcrPageCoordinateFrame`: the field is `pub` so
-// struct-update syntax works in the integration tests, and the type stays out of the bindings. ~keep
-#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-#[cfg_attr(alef, alef(skip))]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct OcrPrunedWords {
-    pub(crate) words: usize,
-    pub(crate) scorable: usize,
-    pub(crate) short: usize,
+    pub ocr_pruned_text: String,
 }
 
 impl From<crate::types::extraction::ExtractedDocument> for InternalDocument {
@@ -484,7 +468,7 @@ impl InternalDocument {
             #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
             ocr_text_claimed_by_tables: false,
             #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-            ocr_pruned_words: OcrPrunedWords::default(),
+            ocr_pruned_text: String::new(),
         }
     }
 

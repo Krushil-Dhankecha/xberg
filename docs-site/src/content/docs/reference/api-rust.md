@@ -14482,6 +14482,7 @@ FFI/trait-bridge boundary.
 | `table_anchors` | `bool` | — | When `true`, Markdown rendering inserts a `[TABLE:{table_id}]` marker immediately before each table's rendered Markdown block. Set by the pipeline from `ExtractionConfig::table_anchors`. Defaults to `false`. |
 | `ocr_coordinate_frame` | `Option<OcrPageCoordinateFrame>` | `Default::default()` | This OCR page's authoritative processed-raster coordinate frame, captured before the page-local metadata it comes from is discarded (GH#1645). `#[serde(skip)]` for the same reason as the fields above -- it never crosses the plugin-bridge JSON wire format -- and is folded into `Metadata::additional` once the page document is final rather than becoming a new public binding type. `None` for every non-OCR document, and for an OCR'd page whose render raster was degenerate (0x0). |
 | `ocr_text_claimed_by_tables` | `bool` | — | Set by an OCR backend when detected tables claimed every text element of this page (#1571), so the page text holds only lines the tables already carry. Never crosses the plugin-bridge JSON wire format. |
+| `ocr_pruned_text` | `String` | — | The text of the hOCR lines that the OCR confidence rule removed from this page (#2312), so the stage score, the image retry trigger and the page verdict judge the page as the engine returned it. Never crosses the plugin-bridge JSON wire format and never reaches the public output. |
 
 ---
 

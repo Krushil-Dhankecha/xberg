@@ -942,8 +942,8 @@ fn photo_noise_hocr(real: usize, noise: usize) -> String {
 
 /// The page verdict judges the page as the engine returned it, not the page after the
 /// confidence rule removed the noise lines (#2312, composing with #2311). The kept text alone
-/// is too short to be judged; the kept text plus the counts of the removed lines gives the
-/// same statistics as the unpruned text.
+/// is too short to be judged; the kept text plus the text of the removed lines gives the same
+/// statistics, and the same stage score, as the unpruned text.
 #[cfg(feature = "ocr")]
 #[test]
 fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
@@ -971,18 +971,32 @@ fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
     let thresholds = OcrQualityThresholds::default();
     let (unpruned_text, _): (String, RetainedWordConfidenceStats) = page_text(0.0);
     let (kept_text, stats) = page_text(75.0);
-    let counts = stats.pruned_words();
+    let pruned_text = stats.pruned_text().to_string();
 
-    assert_eq!(counts.words, 16, "four removed lines of four fragments");
+    assert_eq!(
+        pruned_text.split_whitespace().count(),
+        16,
+        "four removed lines of four fragments"
+    );
     assert!(
         !kept_text.contains('x'),
         "the rule removed the noise lines: {kept_text}"
     );
 
     let oracle = ocr_output_stats(&unpruned_text, &thresholds);
-    let combined = ocr_output_stats_with_pruned(&kept_text, Some(&counts), &thresholds);
+    let combined = ocr_output_stats_with_pruned(&kept_text, Some(&pruned_text), &thresholds);
     assert_eq!(combined.word_count, oracle.word_count);
     assert_eq!(combined.fragmented_word_ratio, oracle.fragmented_word_ratio);
+    // The stage score reads the same text: it cannot cross the stage threshold because of the removal.
+    assert_eq!(
+        compute_quality_score(&with_pruned_text(&kept_text, Some(&pruned_text)), &thresholds),
+        compute_quality_score(&unpruned_text, &thresholds)
+    );
+    assert_ne!(
+        compute_quality_score(&kept_text, &thresholds),
+        compute_quality_score(&unpruned_text, &thresholds),
+        "control: the kept text alone scores differently"
+    );
 
     assert!(
         is_ocr_recognition_noise(&unpruned_text, &thresholds),
@@ -1002,19 +1016,19 @@ fn the_fragmentation_verdict_counts_the_lines_the_confidence_rule_removed() {
             dict_invalid_word_ratio: None,
             confidence_semantics: crate::plugins::ConfidenceSemantics::None,
             confidence: None,
-            pruned: Some(&counts),
+            pruned_text: Some(&pruned_text),
         },
     );
     assert!(acceptance.verdict.is_some_and(|v| v.fragmented_noise));
     assert_eq!(warnings.len(), 1);
 }
 
-/// A backend that returns a short clean text and reports the words of lines it removed from the
+/// A backend that returns a short clean text and reports the text of lines it removed from the
 /// page, as Tesseract does when its confidence rule fires (#2312).
 #[cfg(feature = "pdf")]
 struct PrunedLinesBackend {
     name: &'static str,
-    removed: crate::types::internal::OcrPrunedWords,
+    removed: &'static str,
 }
 
 #[cfg(feature = "pdf")]
@@ -1045,7 +1059,7 @@ impl crate::plugins::OcrBackend for PrunedLinesBackend {
             content: "Alpha bravo charlie delta echo".to_string(),
             mime_type: std::borrow::Cow::Borrowed("text/plain"),
             ocr_internal_document: Some(crate::types::internal::InternalDocument {
-                ocr_pruned_words: self.removed,
+                ocr_pruned_text: self.removed.to_string(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1060,12 +1074,9 @@ impl crate::plugins::OcrBackend for PrunedLinesBackend {
 }
 
 /// Text of the one scanned page after the noise verdict, with discard on, for a backend that
-/// reports `removed` words in the lines it took out.
+/// reports `removed` as the text of the lines it took out.
 #[cfg(feature = "pdf")]
-async fn scanned_page_text_with_removed_lines(
-    name: &'static str,
-    removed: crate::types::internal::OcrPrunedWords,
-) -> String {
+async fn scanned_page_text_with_removed_lines(name: &'static str, removed: &'static str) -> String {
     use crate::core::config::{ExtractInput, ExtractionConfig, OcrConfig};
 
     let _ = crate::plugins::unregister_ocr_backend(name);
@@ -1108,12 +1119,8 @@ async fn scanned_page_text_with_removed_lines(
 #[cfg(feature = "pdf")]
 #[tokio::test]
 async fn the_page_verdict_of_a_scanned_pdf_counts_the_lines_the_engine_removed() {
-    let fragments = crate::types::internal::OcrPrunedWords {
-        words: 20,
-        scorable: 20,
-        short: 20,
-    };
-    let none = crate::types::internal::OcrPrunedWords::default();
+    let fragments = "ii ll xv zq ii ll xv zq ii ll xv zq ii ll xv zq ii ll xv zq";
+    let none = "";
 
     let kept_without_removed_lines = scanned_page_text_with_removed_lines("gh2312-no-removed-lines", none).await;
     let with_removed_lines = scanned_page_text_with_removed_lines("gh2312-removed-lines", fragments).await;
@@ -1125,5 +1132,143 @@ async fn the_page_verdict_of_a_scanned_pdf_counts_the_lines_the_engine_removed()
     assert!(
         !with_removed_lines.contains("Alpha bravo"),
         "the removed fragments count against the page: {with_removed_lines:?}"
+    );
+}
+
+/// A stage is scored on what the engine returned: the kept text plus the lines the confidence
+/// rule removed. Stage A reads a clean sentence and removes a block of fragments, so its full
+/// text falls under the stage threshold and the pipeline takes stage B. If the stage loop
+/// scored the kept text alone, A would win. Scoring the kept text alone at the stage loop turns
+/// the final assertion red (GH#2312). ~keep
+#[cfg(all(feature = "pdf", feature = "ocr"))]
+#[tokio::test]
+#[serial_test::serial]
+async fn the_pipeline_scores_a_stage_with_its_removed_lines_put_back() {
+    use crate::core::config::{ExtractionConfig, OcrConfig, OcrPipelineConfig, OcrPipelineStage};
+    use crate::plugins::{OcrBackend, OcrBackendType, Plugin};
+    use crate::types::ExtractedDocument;
+    use std::sync::Arc;
+
+    const STAGE_A: &str = "gh2312-stage-a";
+    const STAGE_B: &str = "gh2312-stage-b";
+    const KEPT_A: &str = "The committee met on Tuesday to review the annual budget and approved the final report.";
+    const TEXT_B: &str = "Members agreed that the proposal was sound and asked the treasurer for the report.";
+    const REMOVED_A: &str =
+        "ii ll xv zq ii ll xv zq ii ll xv zq ii ll xv zq ii ll xv zq ii ll xv zq ii ll xv zq ii ll xv zq";
+
+    struct StageBackend {
+        name: &'static str,
+        text: &'static str,
+        removed: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrBackend for StageBackend {
+        fn backend_type(&self) -> OcrBackendType {
+            OcrBackendType::Custom
+        }
+        fn supports_language(&self, _: &str) -> bool {
+            true
+        }
+        async fn process_image(&self, _: &[u8], _: &OcrConfig) -> crate::Result<ExtractedDocument> {
+            Ok(ExtractedDocument {
+                content: self.text.to_string(),
+                ocr_internal_document: Some(crate::types::internal::InternalDocument {
+                    ocr_pruned_text: self.removed.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+    }
+
+    impl Plugin for StageBackend {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn version(&self) -> String {
+            "1.0.0".to_string()
+        }
+        fn initialize(&self) -> crate::Result<()> {
+            Ok(())
+        }
+        fn shutdown(&self) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    let thresholds = OcrQualityThresholds::default();
+    let kept_score = compute_quality_score(KEPT_A, &thresholds);
+    let full_score = compute_quality_score(&with_pruned_text(KEPT_A, Some(REMOVED_A)), &thresholds);
+    let score_b = compute_quality_score(TEXT_B, &thresholds);
+    let threshold = (kept_score + full_score) / 2.0;
+    assert!(
+        full_score < threshold && threshold < kept_score && threshold <= score_b,
+        "setup: kept {kept_score}, full {full_score}, stage B {score_b}"
+    );
+
+    crate::plugins::register_ocr_backend(Arc::new(StageBackend {
+        name: STAGE_A,
+        text: KEPT_A,
+        removed: REMOVED_A,
+    }))
+    .unwrap();
+    crate::plugins::register_ocr_backend(Arc::new(StageBackend {
+        name: STAGE_B,
+        text: TEXT_B,
+        removed: "",
+    }))
+    .unwrap();
+    let stage = |backend: &str, priority: u32| OcrPipelineStage {
+        backend: backend.to_string(),
+        priority,
+        language: None,
+        tesseract_config: None,
+        paddle_ocr_config: None,
+        paddle_ocr_settings: None,
+        vlm_config: None,
+        backend_options: None,
+    };
+    let pipeline = OcrPipelineConfig {
+        stages: vec![stage(STAGE_A, 120), stage(STAGE_B, 100)],
+        quality_thresholds: OcrQualityThresholds {
+            pipeline_min_quality: threshold,
+            ..Default::default()
+        },
+    };
+    let config = ExtractionConfig {
+        use_cache: false,
+        ocr: Some(OcrConfig {
+            pipeline: Some(pipeline.clone()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let images = [image::DynamicImage::new_rgb8(16, 16)];
+
+    let chosen = run_ocr_pipeline_for_page(
+        None,
+        Some(&images),
+        #[cfg(feature = "layout-detection")]
+        None,
+        &config,
+        &pipeline,
+        None,
+        0,
+        true,
+        None,
+        None,
+        0,
+        None,
+    )
+    .await
+    .map(|output| output.0);
+    crate::plugins::unregister_ocr_backend(STAGE_A).unwrap();
+    crate::plugins::unregister_ocr_backend(STAGE_B).unwrap();
+
+    assert_eq!(
+        chosen.expect("the pipeline must return a stage result"),
+        TEXT_B,
+        "stage A with its removed lines put back scores under the threshold"
     );
 }
