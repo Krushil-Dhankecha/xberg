@@ -526,6 +526,60 @@ pub(crate) const DEFAULT_DICT_INVALID_LINE_RATIO: f64 = 0.6;
 ///
 /// Returns `false` (never noise) for a line with fewer than
 /// [`MIN_DICT_CANDIDATES_FOR_LINE`] checkable words — see that constant's doc comment.
+/// SCRATCH DEBUG PRINT (design-2312-3), never on a PR branch: edge punctuation and a possessive off.
+fn zc_dbg_norm(t: &str) -> &str {
+    let t = t.trim_matches(|c: char| !c.is_alphanumeric());
+    t.strip_suffix("'s")
+        .or_else(|| t.strip_suffix("\u{2019}s"))
+        .unwrap_or(t)
+}
+
+/// SCRATCH DEBUG PRINT (design-2312-3): one line per hOCR line before any line filter.
+fn zc_dbg_lines(page: u32, lines: &[HocrLineInfo], filter: &DictionaryLineFilter<'_>) {
+    if std::env::var_os("ZCDBG").is_none() {
+        return;
+    }
+    let text_on = std::env::var_os("ZCDBG_TEXT").is_some();
+    let hit = |t: &str| {
+        t.chars().count() >= MIN_WORD_LEN_FOR_DICT_CHECK
+            && t.chars().all(|c| c.is_alphabetic())
+            && (filter.is_valid_word)(t) == Some(true)
+    };
+    for line in lines {
+        let confs: Vec<f64> = line
+            .words
+            .iter()
+            .filter_map(|w| w.confidence)
+            .filter(|c| c.is_finite())
+            .collect();
+        let mean = if confs.is_empty() {
+            -1.0
+        } else {
+            confs.iter().sum::<f64>() / confs.len() as f64
+        };
+        let strict = line.words.iter().filter(|w| hit(w.text.trim())).count();
+        let normed = line.words.iter().filter(|w| hit(zc_dbg_norm(w.text.trim()))).count();
+        let dict_noise = is_dictionary_noise_line(line, filter);
+        let chars: usize = line
+            .words
+            .iter()
+            .map(|w| w.text.chars().filter(|c| !c.is_whitespace()).count())
+            .sum();
+        let short = line.words.iter().filter(|w| w.text.trim().chars().count() <= 2).count();
+        let conf_drop = (0.0..75.0).contains(&mean) && strict == 0;
+        let conf_drop_norm = (0.0..75.0).contains(&mean) && normed == 0;
+        let text = if text_on {
+            line.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ")
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "ZCLINE page={page} words={} short={short} chars={chars} mean={mean:.1} strict_hits={strict} norm_hits={normed} dict_noise={dict_noise} conf_drop={conf_drop} conf_drop_norm={conf_drop_norm} text={text}",
+            line.words.len()
+        );
+    }
+}
+
 fn is_dictionary_noise_line(line: &HocrLineInfo, filter: &DictionaryLineFilter<'_>) -> bool {
     let mut candidates = 0usize;
     let mut invalid = 0usize;
@@ -772,6 +826,9 @@ fn parse_paragraph(
         }
     }
 
+    if let Some(filter) = dictionary_filter {
+        zc_dbg_lines(page, &lines, filter);
+    }
     let mut removed_line_count = 0usize;
     if let Some(filter) = dictionary_filter {
         let lines_before = lines.len();

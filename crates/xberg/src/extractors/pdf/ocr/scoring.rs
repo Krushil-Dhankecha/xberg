@@ -1260,6 +1260,41 @@ pub(crate) fn compute_quality_score(text: &str, thresholds: &OcrQualityThreshold
 /// For any other backend `extract_with_ocr` reports `None`, so this drops the confidence
 /// term entirely and blends nothing, rather than averaging in a number with no defined
 /// scale (see `resolve_confidence_semantics`).
+/// SCRATCH DEBUG PRINT (design-2312-3), never on a PR branch.
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+pub(super) fn zc_dbg_stage(
+    backend: &str,
+    page_index: usize,
+    text: &str,
+    mean_conf: Option<f64>,
+    score: f64,
+    thresholds: &OcrQualityThresholds,
+) {
+    if std::env::var_os("ZCDBG").is_none() {
+        return;
+    }
+    let trimmed = text.trim();
+    let input = scoring_input(trimmed);
+    let s = NativeTextStats::compute(&input, thresholds);
+    eprintln!(
+        "ZCSTAGE page={} backend={} chars={} words={} text_score={:.4} mean_conf={:?} score={:.4} thr={:.3} accept={} alnum={:.3} frag={:.3} avglen={:.2} rep={:.3} meaningful={} garbage={}",
+        page_index + 1,
+        backend,
+        trimmed.chars().count(),
+        s.word_count,
+        compute_quality_score(text, thresholds),
+        mean_conf,
+        score,
+        thresholds.pipeline_min_quality,
+        score >= thresholds.pipeline_min_quality,
+        s.alnum_ratio,
+        s.fragmented_word_ratio,
+        s.avg_word_length,
+        s.consecutive_repeat_ratio,
+        s.meaningful_words,
+        s.garbage_char_count
+    );
+}
 #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
 pub(super) fn pipeline_stage_score(text_score: f64, mean_conf: Option<f64>) -> f64 {
     match mean_conf {
