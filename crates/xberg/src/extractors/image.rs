@@ -2472,7 +2472,31 @@ async fn read_again_as_han(
     backend: &std::sync::Arc<dyn crate::plugins::OcrBackend>,
     image_bytes: &std::sync::Arc<Vec<u8>>,
     config: &crate::core::config::OcrConfig,
+    first_pass: &crate::types::ExtractedDocument,
+) -> crate::Result<HanSecondPass> {
+    let bytes = std::sync::Arc::clone(image_bytes);
+    let tessdata_override = config.tessdata_path.clone();
+    let security_limits = config.security_limits.clone().unwrap_or_default();
+    read_again_as_han_where(backend, image_bytes, config, first_pass, move |han_languages| {
+        crate::ocr::processor::page_is_han_script(
+            &bytes,
+            han_languages,
+            tessdata_override.as_deref(),
+            &security_limits,
+        )
+    })
+    .await
+}
+
+/// [`read_again_as_han`] with the script detection given as an argument. `is_han` receives the
+/// language list of the second pass and runs only for a noisy first pass.
+#[cfg(all(not(target_arch = "wasm32"), feature = "ocr"))]
+async fn read_again_as_han_where(
+    backend: &std::sync::Arc<dyn crate::plugins::OcrBackend>,
+    image_bytes: &std::sync::Arc<Vec<u8>>,
+    config: &crate::core::config::OcrConfig,
     first_pass: crate::types::ExtractedDocument,
+    is_han: impl FnOnce(&[String]) -> bool + Send + 'static,
 ) -> crate::Result<HanSecondPass> {
     use crate::ocr_script::{Script, languages_are_wildcard, languages_cover_script, push_language};
 
@@ -2496,19 +2520,9 @@ async fn read_again_as_han(
     let mut han_config = config.clone();
     push_language(&mut han_config, HAN_LANGUAGE);
     let han_languages = han_config.effective_tesseract_language();
-    let tessdata_override = config.tessdata_path.clone();
-    let security_limits = config.security_limits.clone().unwrap_or_default();
-    let bytes = std::sync::Arc::clone(image_bytes);
-    let is_han = tokio::task::spawn_blocking(move || {
-        crate::ocr::processor::page_is_han_script(
-            &bytes,
-            &han_languages,
-            tessdata_override.as_deref(),
-            &security_limits,
-        )
-    })
-    .await
-    .unwrap_or(false);
+    let is_han = tokio::task::spawn_blocking(move || is_han(&han_languages))
+        .await
+        .unwrap_or(false);
     if !is_han {
         return Ok(HanSecondPass::Kept);
     }
@@ -2554,12 +2568,13 @@ pub(crate) async fn process_whole_image_ocr_with_sparse_retry(
     } else {
         std::borrow::Cow::Borrowed(effective_config)
     };
+    #[cfg_attr(not(feature = "ocr"), allow(unused_mut))]
     let mut primary = backend
         .process_image_owned(std::sync::Arc::clone(&image_bytes), effective_config.as_ref())
         .await?;
     #[cfg(feature = "ocr")]
     let effective_config = if script_second_pass {
-        match read_again_as_han(backend, &image_bytes, effective_config.as_ref(), primary.clone()).await? {
+        match read_again_as_han(backend, &image_bytes, effective_config.as_ref(), &primary).await? {
             HanSecondPass::Kept => effective_config,
             HanSecondPass::Read { document, config } => {
                 primary = *document;
@@ -2570,7 +2585,7 @@ pub(crate) async fn process_whole_image_ocr_with_sparse_retry(
         effective_config
     };
     #[cfg(not(feature = "ocr"))]
-    let _ = (script_second_pass, &mut primary);
+    let _ = script_second_pass;
     let rtl_retry = should_retry_sparse_rtl_ocr(original_config, effective_config.as_ref(), &primary);
     if !whole_page_raster && !rtl_retry {
         return Ok(apply_rtl_capture_public_policy(original_config, primary));
@@ -7885,5 +7900,113 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(warn_event_count(&capture), 1);
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), feature = "ocr"))]
+mod han_second_pass_tests {
+    use super::*;
+    use crate::core::config::OcrConfig;
+    use crate::plugins::{OcrBackend, OcrBackendType, Plugin};
+    use crate::types::ExtractedDocument;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A backend named like the Tesseract one that counts its calls and records the languages.
+    struct CountingBackend {
+        calls: AtomicUsize,
+        languages: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrBackend for CountingBackend {
+        fn backend_type(&self) -> OcrBackendType {
+            OcrBackendType::Custom
+        }
+        fn supports_language(&self, _: &str) -> bool {
+            true
+        }
+        async fn process_image(&self, _: &[u8], config: &OcrConfig) -> crate::Result<ExtractedDocument> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            *self.languages.lock().unwrap() = config.language.clone();
+            Ok(ExtractedDocument {
+                content: "second pass".to_string(),
+                ..Default::default()
+            })
+        }
+    }
+
+    impl Plugin for CountingBackend {
+        fn name(&self) -> &str {
+            "tesseract"
+        }
+        fn version(&self) -> String {
+            "0.0.0".to_string()
+        }
+        fn initialize(&self) -> crate::Result<()> {
+            Ok(())
+        }
+        fn shutdown(&self) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn first_pass(mean_confidence: f64) -> ExtractedDocument {
+        let mut document = ExtractedDocument::default();
+        document
+            .metadata
+            .additional
+            .insert("mean_text_conf".into(), serde_json::json!(mean_confidence));
+        document
+    }
+
+    /// Run the second pass with a detection that answers `page_is_han` and counts its calls.
+    /// Returns the outcome, the calls of the backend, and the calls of the detection.
+    async fn run(mean_confidence: f64, page_is_han: bool) -> (HanSecondPass, Arc<CountingBackend>, usize) {
+        let counting = Arc::new(CountingBackend {
+            calls: AtomicUsize::new(0),
+            languages: std::sync::Mutex::new(Vec::new()),
+        });
+        let backend: Arc<dyn OcrBackend> = counting.clone();
+        let detections = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&detections);
+        let outcome = read_again_as_han_where(
+            &backend,
+            &Arc::new(vec![1]),
+            &OcrConfig::default(),
+            &first_pass(mean_confidence),
+            move |_| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                page_is_han
+            },
+        )
+        .await
+        .expect("the second pass does not error");
+        (outcome, counting, detections.load(Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn a_confident_first_pass_is_kept_without_detection() {
+        let (outcome, backend, detections) = run(95.0, true).await;
+        assert!(matches!(outcome, HanSecondPass::Kept));
+        assert_eq!(detections, 0, "a confident page is never checked for its script");
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_noisy_page_that_is_not_han_is_kept() {
+        let (outcome, backend, detections) = run(20.0, false).await;
+        assert!(matches!(outcome, HanSecondPass::Kept));
+        assert_eq!(detections, 1);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_noisy_han_page_is_read_again_with_chinese_added() {
+        let (outcome, backend, detections) = run(20.0, true).await;
+        assert!(matches!(outcome, HanSecondPass::Read { .. }));
+        assert_eq!(detections, 1);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(*backend.languages.lock().unwrap(), ["eng", "chi_sim"]);
     }
 }

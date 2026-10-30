@@ -8,15 +8,12 @@ use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
 use super::api_pool::TesseractApiPool;
-use super::validation::{TessdataEnv, existing_tessdata_dir_for};
+use super::validation::{OSD_LANGUAGE, TessdataEnv, existing_tessdata_dir_for};
 use crate::extractors::security::SecurityLimits;
 use xberg_tesseract::TessPageSegMode;
 
 /// The script name that Tesseract's orientation and script detection reports for Chinese text.
 const OSD_HAN_SCRIPT: &str = "Han";
-
-/// The Tesseract data set that holds the orientation and script model.
-const OSD_LANGUAGE: &str = "osd";
 
 /// Engines kept for script detection. Detection is rare, so the pool is small.
 const OSD_POOL_CAPACITY: usize = 2;

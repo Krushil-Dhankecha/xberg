@@ -302,3 +302,49 @@ fn a_forced_ocr_request_keeps_the_configured_languages() {
         assert_eq!(call.ocr, ["eng"]);
     }
 }
+
+/// Extract the file `path` with the stub backend and return the languages of every OCR call.
+fn record_file_calls(path: &std::path::Path, config: &ExtractionConfig) -> Vec<RecordedLanguages> {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _ = unregister_ocr_backend("tesseract");
+    register_ocr_backend(Arc::new(RecordingBackend { calls: calls.clone() })).expect("the stub backend registers");
+    let result = helpers::extract_uri_document_blocking(path, Some("application/pdf"), config);
+    unregister_ocr_backend("tesseract").expect("the stub backend unregisters");
+    result.expect("extraction of the fixture must not error");
+    let recorded = calls.lock().expect("calls lock").clone();
+    recorded
+}
+
+/// The result of an extraction depends on the models on disk: a Khmer layer adds `khm` only when
+/// the model is installed. A result cached while the model was missing must not be returned after
+/// the model arrives, with the same file and the same configuration.
+#[test]
+#[serial_test::serial]
+fn a_cached_result_is_not_returned_after_the_script_model_arrives() {
+    let tessdata = tempfile::tempdir().expect("tessdata directory");
+    std::fs::write(tessdata.path().join("eng.traineddata"), b"").expect("write a fake model");
+    let files = tempfile::tempdir().expect("fixture directory");
+    let pdf_path = files.path().join("khmer-layer.pdf");
+    std::fs::write(&pdf_path, two_page_pdf(KHMER_FIRST)).expect("write the fixture");
+    let mut config = config_with(OcrConfig::default());
+    config.ocr.as_mut().expect("ocr block").tessdata_path = Some(tessdata.path().to_path_buf());
+    config.use_cache = true;
+    config.cache_namespace = Some(format!("gh2300-cache-transition-{}", std::process::id()));
+
+    let before = record_file_calls(&pdf_path, &config);
+    assert!(!before.is_empty(), "the picture page must reach the OCR backend");
+    if before.iter().any(|call| call.ocr.iter().any(|l| l == "khm")) {
+        eprintln!("khm is installed outside the test directory; the transition cannot be observed here");
+        return;
+    }
+
+    std::fs::write(tessdata.path().join("khm.traineddata"), b"").expect("install the Khmer model");
+    let after = record_file_calls(&pdf_path, &config);
+    assert!(
+        !after.is_empty(),
+        "the cached result of the run without the model was returned after the model arrived"
+    );
+    for call in &after {
+        assert_eq!(call.ocr, ["eng", "khm"]);
+    }
+}

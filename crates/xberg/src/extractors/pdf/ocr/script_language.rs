@@ -7,6 +7,8 @@
 //! `tesseract_config.language` wins (#1644, #1572).
 
 use crate::core::config::{ExtractionConfig, OcrConfig};
+#[cfg(feature = "ocr")]
+use crate::ocr::processor::validation::read_again_languages_are_on_disk;
 use crate::ocr_script::{Script, languages_are_wildcard, languages_cover_script, tesseract_language_for_script};
 
 /// Fewest non-ASCII letters the text layer must hold before its script counts as evidence.
@@ -49,21 +51,6 @@ pub(super) fn text_layer_script(text: &str) -> Option<Script> {
         return None;
     }
     whatlang::detect_script(&sample).and_then(script_from_detected)
-}
-
-/// `true` when a directory of the tessdata search chain holds every configured language and
-/// `language`. Nothing is downloaded: a list that is not on disk keeps the configured languages,
-/// so a caller that never asked for the language keeps its offline behaviour.
-#[cfg(feature = "ocr")]
-fn read_again_languages_are_on_disk(ocr: &OcrConfig, language: &str) -> bool {
-    let mut languages = ocr.effective_tesseract_language();
-    languages.push(language.to_string());
-    crate::ocr::processor::validation::existing_tessdata_dir_for(
-        &languages,
-        ocr.tessdata_path.as_deref(),
-        &crate::ocr::processor::validation::TessdataEnv::from_process(),
-    )
-    .is_some()
 }
 
 #[cfg(not(feature = "ocr"))]
@@ -135,6 +122,44 @@ mod tests {
     fn a_language_that_is_not_on_disk_is_not_added() {
         let config = config_with(Some(OcrConfig::default()));
         assert!(config_with_language_where(&config, KHMER, |_, _| false).is_none());
+    }
+
+    /// A tessdata directory that holds the named models as empty files, and an OCR config that
+    /// reads `languages` from it.
+    #[cfg(feature = "ocr")]
+    fn ocr_over(models: &[&str], languages: &[&str]) -> (tempfile::TempDir, OcrConfig) {
+        let dir = tempfile::tempdir().unwrap();
+        for model in models {
+            std::fs::write(dir.path().join(format!("{model}.traineddata")), b"").unwrap();
+        }
+        let ocr = OcrConfig {
+            language: languages.iter().map(|l| l.to_string()).collect(),
+            tessdata_path: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        (dir, ocr)
+    }
+
+    #[cfg(feature = "ocr")]
+    #[test]
+    fn the_added_language_is_on_disk_when_the_directory_holds_the_whole_list() {
+        let (_dir, ocr) = ocr_over(&["eng", "added-test-lang"], &["eng"]);
+        assert!(read_again_languages_are_on_disk(&ocr, "added-test-lang"));
+    }
+
+    #[cfg(feature = "ocr")]
+    #[test]
+    fn an_added_language_that_is_not_in_any_directory_is_not_on_disk() {
+        let (_dir, ocr) = ocr_over(&["eng"], &["eng"]);
+        assert!(!read_again_languages_are_on_disk(&ocr, "absent-test-lang"));
+    }
+
+    /// The whole list is checked: the added model is present, a configured one is not.
+    #[cfg(feature = "ocr")]
+    #[test]
+    fn a_configured_language_that_is_missing_keeps_the_added_language_off() {
+        let (_dir, ocr) = ocr_over(&["added-test-lang"], &["absent-configured-lang"]);
+        assert!(!read_again_languages_are_on_disk(&ocr, "added-test-lang"));
     }
 
     fn config_with(ocr: Option<OcrConfig>) -> ExtractionConfig {
