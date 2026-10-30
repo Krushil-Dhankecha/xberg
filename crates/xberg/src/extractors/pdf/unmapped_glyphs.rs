@@ -13,37 +13,107 @@ use crate::types::{PageBoundary, PageContent, ProcessingWarning, Table};
 /// The marker the native extractor leaves for a glyph without a Unicode value.
 pub(super) const LOST_GLYPH_MARKER: char = '\u{FFFD}';
 
+/// Byte positions of the markers in a text, in order. Maps an offset in the text with the markers
+/// to the same place in the text without them.
+struct MarkerPositions(Vec<usize>);
+
+impl MarkerPositions {
+    fn of(text: &str) -> Option<Self> {
+        let positions: Vec<usize> = text.match_indices(LOST_GLYPH_MARKER).map(|(at, _)| at).collect();
+        (!positions.is_empty()).then_some(Self(positions))
+    }
+
+    fn map(&self, offset: usize) -> usize {
+        offset - LOST_GLYPH_MARKER.len_utf8() * self.0.partition_point(|&at| at < offset)
+    }
+}
+
+fn without_markers(text: &str) -> String {
+    text.replace(LOST_GLYPH_MARKER, "")
+}
+
 /// Remove every marker from `text`. `boundaries` index `text` by byte and move with it.
 /// Returns the number of markers removed.
 pub(super) fn strip_text(text: &mut String, boundaries: Option<&mut Vec<PageBoundary>>) -> usize {
-    let _ = (text, boundaries);
-    0
+    let Some(markers) = MarkerPositions::of(text) else {
+        return 0;
+    };
+    for boundary in boundaries.into_iter().flatten() {
+        boundary.byte_start = markers.map(boundary.byte_start);
+        boundary.byte_end = markers.map(boundary.byte_end);
+    }
+    *text = without_markers(text);
+    markers.0.len()
 }
 
 /// Remove every marker from the text of the elements of `doc`, with their annotation offsets.
 pub(super) fn strip_document(doc: &mut InternalDocument) -> usize {
-    let _ = doc;
-    0
+    let mut removed = 0;
+    for element in &mut doc.elements {
+        let Some(markers) = MarkerPositions::of(&element.text) else {
+            continue;
+        };
+        for annotation in &mut element.annotations {
+            annotation.start = markers.map(annotation.start as usize) as u32;
+            annotation.end = markers.map(annotation.end as usize) as u32;
+        }
+        element.text = without_markers(&element.text);
+        removed += markers.0.len();
+    }
+    for table in &mut doc.tables {
+        removed += strip_table(table);
+    }
+    removed
 }
 
 /// Remove every marker from a page: its text, its hierarchy blocks and its tables.
 /// A page whose text becomes blank is marked blank.
 pub(super) fn strip_page(page: &mut PageContent) -> usize {
-    let _ = page;
-    0
+    let mut removed = page.content.matches(LOST_GLYPH_MARKER).count();
+    if removed > 0 {
+        page.content = without_markers(&page.content);
+        page.is_blank = Some(crate::extraction::blank_detection::is_page_text_blank(&page.content));
+    }
+    if let Some(hierarchy) = page.hierarchy.as_mut() {
+        for block in &mut hierarchy.blocks {
+            removed += block.text.matches(LOST_GLYPH_MARKER).count();
+            block.text = without_markers(&block.text);
+        }
+    }
+    for table in &mut page.tables {
+        if table.markdown.contains(LOST_GLYPH_MARKER)
+            || table.cells.iter().flatten().any(|c| c.contains(LOST_GLYPH_MARKER))
+        {
+            removed += strip_table(std::sync::Arc::make_mut(table));
+        }
+    }
+    removed
 }
 
 /// Remove every marker from the cells and the Markdown of a table.
 pub(super) fn strip_table(table: &mut Table) -> usize {
-    let _ = table;
-    0
+    let mut removed = table.markdown.matches(LOST_GLYPH_MARKER).count();
+    table.markdown = without_markers(&table.markdown);
+    for cell in table.cells.iter_mut().flatten() {
+        removed += cell.matches(LOST_GLYPH_MARKER).count();
+        *cell = without_markers(cell);
+    }
+    removed
 }
 
 /// The warning for a caller whose extraction lost glyphs and has no way to recover them: no `ocr`
 /// block, and OCR not switched off. Other callers either asked for OCR or chose to go without.
 pub(super) fn lost_glyph_warning(lost: usize, config: &ExtractionConfig) -> Option<ProcessingWarning> {
-    let _ = (lost, config);
-    None
+    if lost == 0 || config.ocr.is_some() || config.effective_disable_ocr() {
+        return None;
+    }
+    Some(ProcessingWarning {
+        source: std::borrow::Cow::Borrowed("pdf"),
+        message: std::borrow::Cow::Borrowed(
+            "Some glyphs in this PDF have no Unicode value, so their characters are missing from \
+             the text. Set `ocr` to read the affected pages with OCR.",
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -62,8 +132,16 @@ mod tests {
         // "ab" + marker (bytes 0..5), then "cd" + marker + "ef" (bytes 5..12).
         let mut text = format!("ab{MARK}cd{MARK}ef");
         let mut boundaries = vec![
-            PageBoundary { byte_start: 0, byte_end: 5, page_number: 1 },
-            PageBoundary { byte_start: 5, byte_end: 12, page_number: 2 },
+            PageBoundary {
+                byte_start: 0,
+                byte_end: 5,
+                page_number: 1,
+            },
+            PageBoundary {
+                byte_start: 5,
+                byte_end: 12,
+                page_number: 2,
+            },
         ];
 
         let removed = strip_text(&mut text, Some(&mut boundaries));
@@ -81,7 +159,11 @@ mod tests {
     #[test]
     fn strip_text_leaves_text_without_markers_untouched() {
         let mut text = "plain \u{e9} text".to_string();
-        let mut boundaries = vec![PageBoundary { byte_start: 0, byte_end: text.len(), page_number: 1 }];
+        let mut boundaries = vec![PageBoundary {
+            byte_start: 0,
+            byte_end: text.len(),
+            page_number: 1,
+        }];
         let before = boundaries.clone();
 
         assert_eq!(strip_text(&mut text, Some(&mut boundaries)), 0);
@@ -94,14 +176,21 @@ mod tests {
         let mut doc = InternalDocument::new("application/pdf");
         let mut element = InternalElement::text(ElementKind::Paragraph, format!("x{MARK}yz"), 0);
         // "yz" sits at bytes 4..6 while the marker is present.
-        element.annotations = vec![TextAnnotation { start: 4, end: 6, kind: AnnotationKind::Bold }];
+        element.annotations = vec![TextAnnotation {
+            start: 4,
+            end: 6,
+            kind: AnnotationKind::Bold,
+        }];
         doc.elements.push(element);
 
         let removed = strip_document(&mut doc);
 
         assert_eq!(removed, 1);
         assert_eq!(doc.elements[0].text, "xyz");
-        assert_eq!((doc.elements[0].annotations[0].start, doc.elements[0].annotations[0].end), (1, 3));
+        assert_eq!(
+            (doc.elements[0].annotations[0].start, doc.elements[0].annotations[0].end),
+            (1, 3)
+        );
     }
 
     #[test]
@@ -144,16 +233,33 @@ mod tests {
     #[test]
     fn warning_names_the_missing_ocr_setting_only_for_a_caller_without_ocr() {
         let bare = ExtractionConfig::default();
-        let with_block = ExtractionConfig { ocr: Some(OcrConfig::default()), ..ExtractionConfig::default() };
-        let switched_off = ExtractionConfig { disable_ocr: true, ..ExtractionConfig::default() };
+        let with_block = ExtractionConfig {
+            ocr: Some(OcrConfig::default()),
+            ..ExtractionConfig::default()
+        };
+        let switched_off = ExtractionConfig {
+            disable_ocr: true,
+            ..ExtractionConfig::default()
+        };
 
         let warning = lost_glyph_warning(3, &bare).expect("a caller without OCR gets the warning");
         assert_eq!(warning.source, "pdf");
-        assert!(warning.message.contains("no Unicode value"), "message: {}", warning.message);
-        assert!(warning.message.contains("`ocr`"), "message names the setting: {}", warning.message);
+        assert!(
+            warning.message.contains("no Unicode value"),
+            "message: {}",
+            warning.message
+        );
+        assert!(
+            warning.message.contains("`ocr`"),
+            "message names the setting: {}",
+            warning.message
+        );
         assert!(lost_glyph_warning(0, &bare).is_none(), "no lost glyph, no warning");
         assert!(lost_glyph_warning(3, &with_block).is_none(), "the caller asked for OCR");
-        assert!(lost_glyph_warning(3, &switched_off).is_none(), "the caller switched OCR off");
+        assert!(
+            lost_glyph_warning(3, &switched_off).is_none(),
+            "the caller switched OCR off"
+        );
     }
 
     /// One page: a Helvetica line of real words, then a Type0 line whose ToUnicode maps code
@@ -182,7 +288,10 @@ mod tests {
             "<< /Type /FontDescriptor /FontName /AAAAAA+Test /Flags 4 /FontBBox [0 0 1000 1000] \
              /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>"
                 .to_string(),
-            format!("<< /Length {} >>\nstream\n{to_unicode}\nendstream", to_unicode.len() + 1),
+            format!(
+                "<< /Length {} >>\nstream\n{to_unicode}\nendstream",
+                to_unicode.len() + 1
+            ),
         ];
         let mut pdf = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();
@@ -217,15 +326,33 @@ mod tests {
     /// The caller sees the real words, no marker, and a warning that says how to recover the page.
     #[tokio::test]
     async fn extraction_without_ocr_hides_the_marker_and_warns() {
-        let config = ExtractionConfig { ocr_near_empty_fallback: Some(false), ..ExtractionConfig::default() };
+        let config = ExtractionConfig {
+            ocr_near_empty_fallback: Some(false),
+            ..ExtractionConfig::default()
+        };
 
         let result = extract(&config).await;
 
-        assert!(result.content.contains("Real words stay."), "content: {:?}", result.content);
-        assert!(result.content.contains('A'), "the mapped Type0 glyph is read: {:?}", result.content);
-        assert!(!result.content.contains(LOST_GLYPH_MARKER), "marker in content: {:?}", result.content);
         assert!(
-            result.processing_warnings.iter().any(|w| w.message.contains("no Unicode value")),
+            result.content.contains("Real words stay."),
+            "content: {:?}",
+            result.content
+        );
+        assert!(
+            result.content.contains('A'),
+            "the mapped Type0 glyph is read: {:?}",
+            result.content
+        );
+        assert!(
+            !result.content.contains(LOST_GLYPH_MARKER),
+            "marker in content: {:?}",
+            result.content
+        );
+        assert!(
+            result
+                .processing_warnings
+                .iter()
+                .any(|w| w.message.contains("no Unicode value")),
             "warnings: {:?}",
             result.processing_warnings
         );
@@ -234,14 +361,28 @@ mod tests {
     /// Control: with OCR switched off the output keeps its base value, so no marker and no new warning.
     #[tokio::test]
     async fn extraction_with_ocr_off_hides_the_marker_without_a_warning() {
-        let config = ExtractionConfig { disable_ocr: true, ..ExtractionConfig::default() };
+        let config = ExtractionConfig {
+            disable_ocr: true,
+            ..ExtractionConfig::default()
+        };
 
         let result = extract(&config).await;
 
-        assert!(result.content.contains("Real words stay."), "content: {:?}", result.content);
-        assert!(!result.content.contains(LOST_GLYPH_MARKER), "marker in content: {:?}", result.content);
         assert!(
-            !result.processing_warnings.iter().any(|w| w.message.contains("no Unicode value")),
+            result.content.contains("Real words stay."),
+            "content: {:?}",
+            result.content
+        );
+        assert!(
+            !result.content.contains(LOST_GLYPH_MARKER),
+            "marker in content: {:?}",
+            result.content
+        );
+        assert!(
+            !result
+                .processing_warnings
+                .iter()
+                .any(|w| w.message.contains("no Unicode value")),
             "warnings: {:?}",
             result.processing_warnings
         );

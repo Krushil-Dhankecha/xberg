@@ -896,8 +896,7 @@ fn near_empty_ocr_fallback_applies(config: &ExtractionConfig, native_text: &str)
         Some(false) => false,
         Some(true) => config.ocr.is_some() || automatic_ocr_backend_is_registered(),
         None => {
-            config.ocr.is_some()
-                || (native_text_holds_no_content(native_text) && automatic_ocr_backend_is_registered())
+            config.ocr.is_some() || (native_text_holds_no_content(native_text) && automatic_ocr_backend_is_registered())
         }
     }
 }
@@ -2522,7 +2521,7 @@ impl PdfExtractor {
             mut tables,
             mut page_contents,
             mut boundaries,
-            pre_rendered_doc,
+            mut pre_rendered_doc,
             _has_font_encoding_issues,
             annotation_text_fallback,
             pdf_annotations,
@@ -3189,6 +3188,19 @@ impl PdfExtractor {
         #[cfg(not(any(feature = "ocr", feature = "ocr-pipeline")))]
         let (mut text, extraction_method) = (native_text, ExtractionMethod::Native);
 
+        // The routing gates above have read the lost-glyph markers. Pages that stay native must not
+        // show them, so remove them from every native structure before any later step reads it.
+        // The text itself, which carries byte offsets, follows once its page boundaries are known. ~keep
+        for page in page_contents.iter_mut().flatten() {
+            unmapped_glyphs::strip_page(page);
+        }
+        for table in &mut tables {
+            unmapped_glyphs::strip_table(table);
+        }
+        if let Some(native_doc) = pre_rendered_doc.as_mut() {
+            unmapped_glyphs::strip_document(native_doc);
+        }
+
         #[cfg(all(
             feature = "pdf",
             feature = "layout-detection",
@@ -3315,7 +3327,7 @@ impl PdfExtractor {
         // already shifted every later offset, so re-map before handing them to the document
         // selector or page tagging would attribute content to the wrong page. ~keep
         #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
-        let selector_boundaries = if annotation_fallback_applied {
+        let mut selector_boundaries = if annotation_fallback_applied {
             boundaries.clone()
         } else {
             boundaries_for_ocr_output(
@@ -3326,9 +3338,25 @@ impl PdfExtractor {
                 ocr_page_texts.as_deref(),
             )
         };
+        // OCR text replaces the native text on a fully OCR-read document; any other text is native.
+        let lost_glyphs = if extraction_method == ExtractionMethod::Ocr {
+            0
+        } else {
+            #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+            let page_boundaries = selector_boundaries.as_mut();
+            #[cfg(not(any(feature = "ocr", feature = "ocr-pipeline")))]
+            let page_boundaries = boundaries.as_mut();
+            unmapped_glyphs::strip_text(&mut text, page_boundaries)
+        };
         #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
         if let Some(ref mut page_structure) = pdf_metadata.page_structure {
             page_structure.boundaries = selector_boundaries.clone();
+        }
+        #[cfg(not(any(feature = "ocr", feature = "ocr-pipeline")))]
+        if lost_glyphs > 0
+            && let Some(ref mut page_structure) = pdf_metadata.page_structure
+        {
+            page_structure.boundaries = boundaries.clone();
         }
         #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
         let (mut doc, document_origin, document_is_structured) = select_pdf_document(
@@ -3374,6 +3402,9 @@ impl PdfExtractor {
         );
         #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
         doc.ocr_page_failures.append(&mut ocr_page_failures);
+        if let Some(warning) = unmapped_glyphs::lost_glyph_warning(lost_glyphs, config) {
+            crate::core::diagnostics::push_warning_deduped(&mut doc.processing_warnings, warning);
+        }
 
         #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
         crate::core::diagnostics::dedup_extend_warnings(
