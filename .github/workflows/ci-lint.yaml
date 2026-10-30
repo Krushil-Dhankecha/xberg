@@ -98,8 +98,6 @@ jobs:
         run: mise run release:test:contracts
       - name: Test Python archive publication
         run: mise run python:publish:archive:test
-      # ~keep Runs after the step above: its `uv run --frozen --only-dev` syncs the root venv
-      # that this task's `uv run --no-sync` reuses.
       - name: Test the layout-annotation importer
         run: mise run benchmark:validate:layout-annotations
       - name: Test the fixture generator

@@ -18,4 +18,4 @@ run = [
 
 ["benchmark:validate:layout-annotations"]
 description = "Validate independent layout ground-truth preservation and identity checks"
-run = "uv run --no-sync python -m pytest -q tools/benchmark-harness/tests/test_import_omnidocbench.py"
+run = "uv run --frozen --only-dev python -m pytest -q tools/benchmark-harness/tests/test_import_omnidocbench.py"
