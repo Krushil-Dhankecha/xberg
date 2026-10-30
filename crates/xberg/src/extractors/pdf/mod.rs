@@ -6960,6 +6960,66 @@ mod tests {
         );
     }
 
+    /// Text made only of U+FFFD holds no content: every glyph of the page lost its Unicode value.
+    /// Without an `ocr` block the fallback must treat it like empty text, or a page that is
+    /// fully undecodable stops reaching OCR once the extractor keeps the U+FFFD. A page with
+    /// real text beside the U+FFFD stays native.
+    #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+    #[test]
+    #[serial_test::serial]
+    fn near_empty_fallback_treats_undecodable_only_text_as_absent_text() {
+        use crate::plugins::{OcrBackend, OcrBackendType, Plugin};
+        use std::sync::Arc;
+
+        struct StandInBackend(String);
+        impl Plugin for StandInBackend {
+            fn name(&self) -> &str {
+                &self.0
+            }
+            fn version(&self) -> String {
+                "1.0.0".to_string()
+            }
+            fn initialize(&self) -> crate::Result<()> {
+                Ok(())
+            }
+            fn shutdown(&self) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+        #[async_trait::async_trait]
+        impl OcrBackend for StandInBackend {
+            fn backend_type(&self) -> OcrBackendType {
+                OcrBackendType::Custom
+            }
+            fn supports_language(&self, _: &str) -> bool {
+                true
+            }
+            async fn process_image(
+                &self,
+                _: &[u8],
+                _: &crate::core::config::OcrConfig,
+            ) -> crate::Result<crate::types::ExtractedDocument> {
+                Ok(crate::types::ExtractedDocument::default())
+            }
+        }
+
+        let name = crate::core::config::OcrConfig::default().backend;
+        let registered_here = !automatic_ocr_backend_is_registered()
+            && crate::plugins::register_ocr_backend(Arc::new(StandInBackend(name.clone()))).is_ok();
+        let without_block = ExtractionConfig::default();
+
+        let lost = near_empty_ocr_fallback_applies(&without_block, "\u{FFFD}\u{FFFD} \n\u{FFFD}");
+        let mixed = near_empty_ocr_fallback_applies(&without_block, "A real word \u{FFFD}");
+        let backend_present = automatic_ocr_backend_is_registered();
+        if registered_here {
+            crate::plugins::unregister_ocr_backend(&name).unwrap();
+        }
+
+        assert!(backend_present, "the test needs an automatic backend to be registered");
+        assert!(lost, "text of only U+FFFD reaches OCR like empty text");
+        assert!(!mixed, "text with real words beside U+FFFD stays native");
+    }
+
     /// Switched on, the fallback stops requiring *completely* empty text -- that is the whole
     /// point: a scanned page carrying only a page label or scanner stamp must reach OCR. It
     /// still consults the backend registry exactly as the derived condition does.
