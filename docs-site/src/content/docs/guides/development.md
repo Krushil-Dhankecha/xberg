@@ -140,7 +140,8 @@ E2E suites are generated from shared fixtures by Alef. Generation is repo-wide, 
 per-language:
 
 ```bash title="Terminal"
-mise run e2e:verify           # Regenerate every suite from fixtures and fail on uncommitted drift
+mise run dart:format:context && alef e2e generate --strict  # Regenerate every suite from fixtures
+mise run e2e:verify           # Regenerate and fail on uncommitted drift (the CI check)
 ```
 
 ---
@@ -204,7 +205,7 @@ mise run docs:serve         # pnpm install + astro dev (live reload)
 
 Documentation examples have two source paths:
 
-- Prefer fixture-backed examples for public APIs shared across languages. Add or update the JSON fixture under `fixtures/`, run `mise run e2e:verify`, and render its generated snippets with `ApiSnippetGroup`. The generated files under `docs-site/src/snippets-generated/` are Alef output; never edit them directly.
+- Prefer fixture-backed examples for public APIs shared across languages. Add or update the JSON fixture under `fixtures/`, run `mise run dart:format:context && alef e2e generate --strict`, and render its generated snippets with `ApiSnippetGroup`. The generated files under `docs-site/src/snippets-generated/` are Alef output; never edit them directly.
 - Use maintained snippets under `docs-site/src/snippets/` only for examples that do not map to an E2E fixture, such as deployment, server, or language-specific workflows. Import these Markdown files into the relevant `.mdx` page as Astro components.
 
 A fixture-backed example renders every available language without one import per binding:

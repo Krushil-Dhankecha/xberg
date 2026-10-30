@@ -226,10 +226,11 @@ cargo run -p xberg-e2e-generator -- generate --lang java
 cargo run -p xberg-e2e-generator -- generate --lang go
 ```
 
-Or use the mise task (it also fails on uncommitted drift):
+Or regenerate every language the way the repository does (`mise run e2e:verify` then checks
+for uncommitted drift):
 
 ```bash
-mise run e2e:verify
+mise run dart:format:context && alef e2e generate --strict
 ```
 
 ## Adding New Fixtures
