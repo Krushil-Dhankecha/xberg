@@ -2438,6 +2438,95 @@ async fn select_rtl_retry_result(
 pub(crate) struct SparseRetryPolicy {
     pub(crate) whole_page_raster: bool,
     pub(crate) allow_standard_retry: bool,
+    /// The caller chose OCR on its own, so a noisy page may be read again with Chinese added.
+    /// An explicit `force_ocr` or `force_ocr_pages` request sets this to `false` (GH#2300).
+    pub(crate) script_second_pass: bool,
+}
+
+/// `true` when OCR was chosen by the extractor and not requested by the caller, so the
+/// extractor may adapt the OCR languages to the page.
+pub(crate) fn ocr_chosen_by_extractor(config: &crate::core::config::ExtractionConfig) -> bool {
+    !config.force_ocr && config.force_ocr_pages.is_none()
+}
+
+/// The result of the Han second pass.
+#[cfg(all(not(target_arch = "wasm32"), feature = "ocr"))]
+enum HanSecondPass {
+    /// The first pass stands.
+    Kept,
+    /// The page was read again with Chinese added to the languages.
+    Read {
+        document: Box<crate::types::ExtractedDocument>,
+        config: Box<crate::core::config::OcrConfig>,
+    },
+}
+
+/// Read a noisy page again with `chi_sim` added, when the page is Han (GH#2300).
+///
+/// The caller decides this for a page it sent to OCR on its own. The Tesseract processor runs the
+/// languages it is given and nothing else. The second pass is an ordinary OCR call, so the
+/// processor caches it under the languages and tessdata directory that produced it. Nothing is
+/// downloaded: the languages and the `osd` model must already be in the tessdata search chain.
+#[cfg(all(not(target_arch = "wasm32"), feature = "ocr"))]
+async fn read_again_as_han(
+    backend: &std::sync::Arc<dyn crate::plugins::OcrBackend>,
+    image_bytes: &std::sync::Arc<Vec<u8>>,
+    config: &crate::core::config::OcrConfig,
+    first_pass: crate::types::ExtractedDocument,
+) -> crate::Result<HanSecondPass> {
+    use crate::ocr_script::{Script, languages_are_wildcard, languages_cover_script, push_language};
+
+    const HAN_LANGUAGE: &str = "chi_sim";
+    if backend.name() != "tesseract" {
+        return Ok(HanSecondPass::Kept);
+    }
+    let languages = config.effective_tesseract_language();
+    if languages_are_wildcard(&languages) || languages_cover_script(&languages, Script::Han) {
+        return Ok(HanSecondPass::Kept);
+    }
+    let noisy = first_pass
+        .metadata
+        .additional
+        .get("mean_text_conf")
+        .and_then(serde_json::Value::as_f64)
+        .is_some_and(|mean| mean < crate::core::config::OcrQualityThresholds::default().min_ocr_mean_confidence);
+    if !noisy {
+        return Ok(HanSecondPass::Kept);
+    }
+    let mut han_config = config.clone();
+    push_language(&mut han_config, HAN_LANGUAGE);
+    let han_languages = han_config.effective_tesseract_language();
+    let tessdata_override = config.tessdata_path.clone();
+    let security_limits = config.security_limits.clone().unwrap_or_default();
+    let bytes = std::sync::Arc::clone(image_bytes);
+    let is_han = tokio::task::spawn_blocking(move || {
+        crate::ocr::processor::page_is_han_script(
+            &bytes,
+            &han_languages,
+            tessdata_override.as_deref(),
+            &security_limits,
+        )
+    })
+    .await
+    .unwrap_or(false);
+    if !is_han {
+        return Ok(HanSecondPass::Kept);
+    }
+    match backend
+        .process_image_owned(std::sync::Arc::clone(image_bytes), &han_config)
+        .await
+    {
+        Ok(document) if !document.content.trim().is_empty() => Ok(HanSecondPass::Read {
+            document: Box::new(document),
+            config: Box::new(han_config),
+        }),
+        Ok(_) => Ok(HanSecondPass::Kept),
+        Err(error @ crate::XbergError::Cancelled) => Err(error),
+        Err(error) => {
+            tracing::debug!(%error, "Han second pass failed; keeping the first OCR pass");
+            Ok(HanSecondPass::Kept)
+        }
+    }
 }
 
 #[cfg(all(
@@ -2455,6 +2544,7 @@ pub(crate) async fn process_whole_image_ocr_with_sparse_retry(
     let SparseRetryPolicy {
         whole_page_raster,
         allow_standard_retry,
+        script_second_pass,
     } = retry_policy;
     if cancel_token.is_some_and(crate::cancellation::CancellationToken::is_cancelled) {
         return Err(crate::XbergError::Cancelled);
@@ -2464,9 +2554,23 @@ pub(crate) async fn process_whole_image_ocr_with_sparse_retry(
     } else {
         std::borrow::Cow::Borrowed(effective_config)
     };
-    let primary = backend
+    let mut primary = backend
         .process_image_owned(std::sync::Arc::clone(&image_bytes), effective_config.as_ref())
         .await?;
+    #[cfg(feature = "ocr")]
+    let effective_config = if script_second_pass {
+        match read_again_as_han(backend, &image_bytes, effective_config.as_ref(), primary.clone()).await? {
+            HanSecondPass::Kept => effective_config,
+            HanSecondPass::Read { document, config } => {
+                primary = *document;
+                std::borrow::Cow::Owned(*config)
+            }
+        }
+    } else {
+        effective_config
+    };
+    #[cfg(not(feature = "ocr"))]
+    let _ = (script_second_pass, &mut primary);
     let rtl_retry = should_retry_sparse_rtl_ocr(original_config, effective_config.as_ref(), &primary);
     if !whole_page_raster && !rtl_retry {
         return Ok(apply_rtl_capture_public_policy(original_config, primary));
@@ -2956,6 +3060,7 @@ impl ImageExtractor {
             SparseRetryPolicy {
                 whole_page_raster: true,
                 allow_standard_retry: true,
+                script_second_pass: ocr_chosen_by_extractor(config),
             },
             config.cancel_token.as_ref(),
         )
@@ -5116,6 +5221,7 @@ mod tests {
                 SparseRetryPolicy {
                     whole_page_raster: true,
                     allow_standard_retry: false,
+                    script_second_pass: false,
                 },
                 None,
             )
@@ -5225,6 +5331,7 @@ mod tests {
                 SparseRetryPolicy {
                     whole_page_raster: true,
                     allow_standard_retry: false,
+                    script_second_pass: false,
                 },
                 None,
             )
@@ -5331,6 +5438,7 @@ mod tests {
                 SparseRetryPolicy {
                     whole_page_raster: true,
                     allow_standard_retry: false,
+                    script_second_pass: false,
                 },
                 None,
             )
@@ -5611,6 +5719,7 @@ mod tests {
                     SparseRetryPolicy {
                         whole_page_raster: true,
                         allow_standard_retry: false,
+                        script_second_pass: false,
                     },
                     None,
                 )

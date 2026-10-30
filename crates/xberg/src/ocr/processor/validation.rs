@@ -367,6 +367,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_osd_model_is_found_in_a_later_directory_than_the_recognition_language() {
+        let cache = tempfile::tempdir().unwrap();
+        let system = tempfile::tempdir().unwrap();
+        std::fs::write(cache.path().join("eng.traineddata"), b"").unwrap();
+        std::fs::write(system.path().join("eng.traineddata"), b"").unwrap();
+        std::fs::write(system.path().join("osd.traineddata"), b"").unwrap();
+        let env = TessdataEnv {
+            tessdata_prefix: system.path().to_str().map(str::to_string),
+            cache_dir: None,
+        };
+        // The first directory of the chain has the language and no model; the second has both.
+        let found = existing_tessdata_dir_for(&["osd".to_string()], Some(cache.path()), &env);
+        assert_eq!(found.as_deref(), system.path().to_str());
+    }
+
+    #[test]
     fn test_resolve_all_installed_languages_success() {
         let dir = tempfile::tempdir().unwrap();
         let tessdata = dir.path();
