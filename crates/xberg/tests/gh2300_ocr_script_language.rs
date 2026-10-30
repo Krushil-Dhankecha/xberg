@@ -311,8 +311,7 @@ fn record_file_calls(path: &std::path::Path, config: &ExtractionConfig) -> Vec<R
     let result = helpers::extract_uri_document_blocking(path, Some("application/pdf"), config);
     unregister_ocr_backend("tesseract").expect("the stub backend unregisters");
     result.expect("extraction of the fixture must not error");
-    let recorded = calls.lock().expect("calls lock").clone();
-    recorded
+    calls.lock().expect("calls lock").clone()
 }
 
 /// The result of an extraction depends on the models on disk: a Khmer layer adds `khm` only when
@@ -334,7 +333,7 @@ fn a_cached_result_is_not_returned_after_the_script_model_arrives() {
     let before = record_file_calls(&pdf_path, &config);
     assert!(!before.is_empty(), "the picture page must reach the OCR backend");
     if before.iter().any(|call| call.ocr.iter().any(|l| l == "khm")) {
-        eprintln!("khm is installed outside the test directory; the transition cannot be observed here");
+        // The model is installed outside the test directory, so the transition cannot be observed.
         return;
     }
 

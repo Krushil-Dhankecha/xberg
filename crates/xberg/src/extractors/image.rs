@@ -2478,12 +2478,7 @@ async fn read_again_as_han(
     let tessdata_override = config.tessdata_path.clone();
     let security_limits = config.security_limits.clone().unwrap_or_default();
     read_again_as_han_where(backend, image_bytes, config, first_pass, move |han_languages| {
-        crate::ocr::processor::page_is_han_script(
-            &bytes,
-            han_languages,
-            tessdata_override.as_deref(),
-            &security_limits,
-        )
+        crate::ocr::processor::page_is_han_script(&bytes, han_languages, tessdata_override.as_deref(), &security_limits)
     })
     .await
 }
