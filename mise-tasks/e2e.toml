@@ -1,33 +1,8 @@
 # Fixture-driven e2e suites, included from mise.toml [task_config]. ~keep
 
-["e2e:generate"]
-description = "Generate E2E tests for all languages from fixtures"
-run = [{ task = "dart:format:context" }, "alef e2e generate --strict"]
-
-["e2e:build"]
-description = "Build all language bindings used by e2e suites (release)"
-run = "alef build --release --lang python,node,ruby,php,ffi,go,java,csharp,elixir,wasm,dart,kotlin_android,swift,zig"
-
-["e2e:all"]
-description = "Generate, build, and run all e2e test suites"
-run = [{ task = "e2e:generate" }, { task = "e2e:build" }, { task = "e2e:test" }]
-
-["e2e:test"]
-description = "Run all e2e test suites across all languages"
-run = "alef test --e2e --lang rust,python,node,ruby,php,go,java,csharp,elixir,wasm,dart,kotlin_android,swift,zig"
-
-["e2e:lint"]
-description = "Validate e2e fixtures"
-run = "alef e2e validate"
-
 ["e2e:verify"]
 description = "Verify generated e2e tests are up to date"
 run = [{ task = "dart:format:context" }, "alef e2e generate --strict", "git diff --exit-code e2e/"]
-
-["e2e:lang"]
-description = "Run e2e tests for one language (e.g., mise run e2e:lang python)"
-usage = 'arg "[lang]" env="E2E_LANG" default="rust" help="Language whose <lang>:e2e task runs"'
-run = 'mise run "$usage_lang:e2e"'
 
 # A RUSTFLAGS set anywhere in the environment REPLACES .cargo/config.toml's
 # [target.wasm32-unknown-unknown] rustflags outright -- cargo does not merge the two. CI's

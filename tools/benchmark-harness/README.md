@@ -690,11 +690,11 @@ qualification run. `--max-pages` is a per-document limit; pages are 1-indexed in
 
 ```bash
 : "${EXPECTED_PAGES:?set the independently verified limited cohort page count}"
-mise run benchmark:models -- \
+cargo run --locked -p benchmark-harness -- model-benchmark --fixtures tools/benchmark-harness/fixtures \
   --cohort tools/benchmark-harness/cohorts/layout-pdf-fast.json \
   --model-a rtdetr --model-b pp_doclayout_v3 --max-pages 3 --iterations 1 \
   --expected-pages "$EXPECTED_PAGES" --output /tmp/xberg-layout-detectors.json
-mise run benchmark:models:validate -- --artifact /tmp/xberg-layout-detectors.json
+cargo run --locked -p benchmark-harness -- model-benchmark-validate --artifact /tmp/xberg-layout-detectors.json
 ```
 
 The runtime resolves and checksum-verifies published model files before timing, records their actual

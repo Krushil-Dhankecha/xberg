@@ -1,5 +1,4 @@
-# Benchmark harness tasks, included from mise.toml [task_config]. vars.bench_fixtures is the
-# shared fixture corpus. ~keep
+# Benchmark harness tasks, included from mise.toml [task_config]. ~keep
 
 ["benchmark:setup:swap"]
 description = "Provision Linux swap for the benchmark all-feature release link"
@@ -28,14 +27,6 @@ run = "cargo test --locked -p benchmark-harness"
 ["benchmark:local"]
 description = "Local head-to-head PDF benchmark: xberg vs liteparse (+docling if installed) with per-document gap report"
 run = "bash tools/benchmark-harness/scripts/bench_local.sh"
-
-["benchmark:models"]
-description = "Compare actual RT-DETR and PP-DocLayoutV3 detector timing and counts"
-run = 'cargo run --locked -p benchmark-harness -- model-benchmark --fixtures "{{vars.bench_fixtures}}"'
-
-["benchmark:models:validate"]
-description = "Validate detector artifact identities and complete page/arm counts"
-run = "cargo run --locked -p benchmark-harness -- model-benchmark-validate"
 
 ["benchmark:corpus:cache:publish"]
 description = "Verify and publish the content-addressed reference corpus cache. Run after a corpus rebuild + build_corpus.py --stage materialize."

@@ -360,7 +360,7 @@ jobs:
         env:
           RUSTFLAGS: ""
       # Generated Markdown and Rust bindings are committed after the same Poly formatting
-      # pass used by `mise run alef:generate`. Alef verifies the formatted render when Poly is
+      # pass used by `alef all`. Alef verifies the formatted render when Poly is
       # available; without it this job compared raw backend output and reported false drift. ~keep
       # Poly delegates Java formatting to the executables on PATH. Pin the same formatter chain
       # used for the committed Alef output; google-java-format alone is insufficient because Poly

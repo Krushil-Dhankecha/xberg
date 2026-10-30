@@ -14,10 +14,6 @@ run = "bash scripts/ci/rust/check-libheif-runtime.sh"
 description = "Build all Rust crates in debug mode"
 run = [{ task = "rust:build", args = ["dev"] }]
 
-["rust:build:release"]
-description = "Build all Rust crates in release mode"
-run = [{ task = "rust:build", args = ["release"] }]
-
 ["rust:build:profiling"]
 description = "Build all Rust crates with profiling features (for flamegraph generation)"
 env = { ENABLE_PROFILING = "true", RUSTFLAGS = "-g" }
@@ -62,17 +58,6 @@ description = "Verify native VLM layout restoration without formula recognition"
 depends = ["os:require linux darwin"]
 run = "bash scripts/ci/rust/run-vlm-auto-gate-tests.sh"
 
-["rust:test:quick"]
-description = "Run fast Rust tests (unit tests only)"
-run = "cargo test --locked --lib --workspace --exclude xberg-php --exclude xberg-node --exclude xberg-wasm"
-
-["rust:lint"]
-description = "Lint Rust code WITH auto-fix (cargo fmt + cargo clippy --fix)"
-run = [
-  "cargo fmt --all",
-  "cargo clippy --workspace --fix --allow-dirty --allow-staged --exclude xberg-php --exclude xberg-node --exclude xberg-wasm",
-]
-
 ["rust:lint:feature"]
 description = "Lint the library with one standalone feature enabled"
 usage = 'arg "<feature>" env="FEATURE" help="The single library feature to enable"'
@@ -81,10 +66,3 @@ run = 'cargo clippy --locked -p xberg --lib --no-default-features --features "$u
 ["rust:lint:email"]
 description = "Lint all targets with only the email feature enabled"
 run = "cargo clippy --locked -p xberg --no-default-features --features email --all-targets -- -D warnings"
-
-["rust:lint:check"]
-description = "Lint Rust code WITHOUT auto-fix (check-only)"
-run = [
-  "cargo fmt --all -- --check",
-  "cargo clippy --workspace --exclude xberg-php --exclude xberg-node --exclude xberg-wasm -- -D warnings",
-]

@@ -22,7 +22,6 @@ Top-level tasks operate on the Rust core:
 
 ```bash title="Terminal"
 mise run build                # Build the Rust core (debug)
-mise run rust:build:release   # Build the Rust core (release)
 mise run test                 # Run Rust core tests
 mise run check                # Lint + format check across the whole repo
 ```
@@ -31,10 +30,9 @@ The Rust namespace exposes the finer-grained variants:
 
 ```bash title="Terminal"
 mise run rust:build:dev       # Debug build (faster compile, no optimizations)
-mise run rust:build:release   # Release build (slow compile, fast binary)
+mise run rust:build release   # Release build (slow compile, fast binary)
 mise run rust:test            # Run all Rust tests
 mise run rust:test:ci         # Same tests, with CI diagnostics (tessdata setup)
-mise run rust:test:quick      # Fast unit tests only
 ```
 
 Language bindings are generated and compiled by Alef, so they do not each get a
@@ -45,11 +43,8 @@ Suites](#end-to-end-test-suites)).
 ### Bulk Operations
 
 ```bash title="Terminal"
-mise run build:all            # Build core + every binding
 mise run alef:build           # Build every binding (via Alef)
-mise run test:all             # Run all tests (core + bindings)
 mise run test:bindings        # Run binding test suites only
-mise run test:cov             # All tests with coverage
 mise run check                # Lint + format check across the whole repo
 ```
 
@@ -98,29 +93,6 @@ host process's stderr:
 RUST_LOG=debug mise run python:e2e
 ```
 
-### Testing the live browser demo
-
-The demo at `docs-site/public/demo.html` loads `@xberg-io/xberg-wasm` from a CDN. To test local changes against it, use:
-
-```bash title="Terminal"
-mise run demo:dev
-```
-
-This builds the Wasm binary and TypeScript dist, patches the demo with local URLs, and starts two servers:
-
-| Server | URL                     | Role                               |
-| ------ | ----------------------- | ---------------------------------- |
-| Docs   | `http://localhost:8001` | Serves the patched `demo-dev.html` |
-| Assets | `http://localhost:9000` | Serves the local Wasm package      |
-
-Open **`http://localhost:8001/demo-dev.html`** — no manual edits needed. The patched file (`docs-site/public/demo-dev.html`) is gitignored and regenerated on every run. The two different ports reproduce the cross-origin setup the CDN creates in production.
-
-To skip the slow Rust build when you've only changed TypeScript:
-
-```bash title="Terminal"
-SKIP_WASM_BUILD=1 mise run demo:dev
-```
-
 ---
 
 ## Working with Alef Bindings
@@ -134,14 +106,15 @@ To change a binding, edit the Rust source, README templates, fixtures, or `alef.
 then regenerate:
 
 ```bash title="Terminal"
-mise run alef:generate        # Regenerate all Alef-managed output (alef all --clean, formatting via poly, no build)
+alef all --clean --skip-compile --skip-snippet-validation  # Regenerate all Alef-managed output, no build
 mise run alef:build           # Compile the bindings
-mise run alef:sync            # Sync the version from Cargo.toml to every manifest
+mise run version:sync         # Sync the version from Cargo.toml to every manifest
 mise run alef:verify          # Check that generated output is up to date
 ```
 
-`mise run alef:generate` regenerates and formats (via `poly`) without compiling. Commit the
-generator inputs and regenerated output together in one change.
+`alef all` regenerates and formats (via `poly`); `--skip-compile` keeps it from compiling.
+Run `mise run dart:format:context` first when the Dart output changes, so `dart format` reads the
+pinned language version. Commit the generator inputs and regenerated output together in one change.
 
 ---
 
@@ -170,21 +143,14 @@ Each language runs its suite with `mise run <lang>:e2e`:
 | Kotlin / Android     | `e2e/kotlin_android/` | `mise run kotlin-android:e2e` |
 | WebAssembly          | `e2e/wasm/`           | `mise run wasm:e2e`           |
 
-Or run one suite by name with `mise run e2e:lang python`.
-
 ### Regenerate end-to-end Tests
 
 E2E suites are generated from shared fixtures by Alef. Generation is repo-wide, not
-per-language. The canonical tasks are:
+per-language:
 
 ```bash title="Terminal"
-mise run e2e:generate         # Regenerate all suites from fixtures
-mise run e2e:build            # Build the bindings the suites link against
-mise run e2e:test             # Run every suite
-mise run e2e:all              # Generate, build, and run in one pass
+mise run e2e:verify           # Regenerate every suite from fixtures and fail on uncommitted drift
 ```
-
-Verify the checked-in suites are current with `mise run e2e:verify`.
 
 ---
 
@@ -208,14 +174,9 @@ FRAMEWORK=xberg MODE=batch mise run benchmark:run
 
 ### With Profiling
 
-Generate flamegraphs to see where time is spent:
-
-```bash title="Terminal"
-mise run benchmark:profile
-```
-
-This builds with the `profiling` profile (release plus debug symbols) and runs the
-pipeline benchmark. Results appear under `flamegraphs/<sha>/` as interactive SVGs.
+The `profiling.yaml` workflow (manual dispatch) generates flamegraphs of the pipeline benchmark.
+`mise run rust:build:profiling` builds the same `profiling` profile (release plus debug symbols)
+locally.
 
 View live benchmark results at <https://xberg.io/benchmarks>.
 
@@ -230,14 +191,7 @@ mise run check              # Format + lint check, no modifications (CI-equivale
 ```
 
 `poly` handles Python (ruff), JS/TS (oxc), TOML, and Markdown directly, so those
-languages have no dedicated lint task. Compiled bindings expose a native linter:
-
-```bash title="Terminal"
-mise run rust:lint          # cargo fmt + clippy (auto-fix); rust:lint:check for check-only
-mise run csharp:lint        # dotnet format
-mise run swift:lint         # swift format lint
-mise run zig:lint           # zig fmt --check
-```
+languages have no dedicated lint task.
 
 The repository uses pre-commit hooks that enforce conventional commit messages, code formatting, and linter rules. If a commit is rejected, the hook output tells you exactly what to fix.
 
@@ -259,7 +213,7 @@ mise run docs:serve         # pnpm install + astro dev (live reload)
 
 Documentation examples have two source paths:
 
-- Prefer fixture-backed examples for public APIs shared across languages. Add or update the JSON fixture under `fixtures/`, run `mise run e2e:generate`, and render its generated snippets with `ApiSnippetGroup`. The generated files under `docs-site/src/snippets-generated/` are Alef output; never edit them directly.
+- Prefer fixture-backed examples for public APIs shared across languages. Add or update the JSON fixture under `fixtures/`, run `mise run e2e:verify`, and render its generated snippets with `ApiSnippetGroup`. The generated files under `docs-site/src/snippets-generated/` are Alef output; never edit them directly.
 - Use maintained snippets under `docs-site/src/snippets/` only for examples that do not map to an E2E fixture, such as deployment, server, or language-specific workflows. Import these Markdown files into the relevant `.mdx` page as Astro components.
 
 A fixture-backed example renders every available language without one import per binding:
@@ -291,7 +245,7 @@ docs-site/src/snippets/
 └── cli/              # CLI usage
 ```
 
-When you change a user-facing API, update its fixture and regenerate. When no fixture-backed example is appropriate, update the maintained snippet instead. Use `mise run docs:snippets:gaps` to find unreferenced snippets or missing language variants, and `mise run docs:snippets:validate` to syntax-check both generated and maintained snippets.
+When you change a user-facing API, update its fixture and regenerate. When no fixture-backed example is appropriate, update the maintained snippet instead. Use `mise run docs:snippets:gaps` to find unreferenced snippets or missing language variants, and `mise run docs:snippets:all` to audit them and syntax-check both generated and maintained snippets.
 
 ## Debugging
 
@@ -363,8 +317,8 @@ Before pushing, run the same checks CI runs:
 ```bash title="Terminal"
 mise run check              # Format + lint (matches ci-lint)
 mise run rust:test:ci       # Rust tests with CI diagnostics
-mise run e2e:all            # Generate, build, and run every e2e suite
-mise run test:cov           # All tests with coverage
+mise run e2e:verify         # Generated e2e suites are current
+mise run <lang>:e2e         # One e2e suite, as each ci-e2e leg runs it
 ```
 
 ### Other Workflows

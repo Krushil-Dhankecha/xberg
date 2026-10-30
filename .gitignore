@@ -297,7 +297,6 @@ pkg/
 
 
 # Local dev artifacts
-docs-site/public/demo-dev.html
 docs-site/dist/
 docs-site/.astro/
 demo-loaded.png

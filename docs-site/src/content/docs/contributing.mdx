@@ -72,7 +72,6 @@ For building individual language bindings, use the namespace pattern:
 
 ```bash title="Terminal"
 mise run rust:build
-mise run php:build
 mise run alef:build # every binding
 ```
 
@@ -230,7 +229,7 @@ If a check is reporting "expected check missing" rather than failing outright, t
 - **Ruby:** No global state outside `Xberg` module, panic-free native bridge, follow RuboCop
 - **Go / Java / C#:** Follow standard language conventions and project linters
 
-**Testing:** language-specific tests live in each package; shared E2E behavior belongs in `e2e/` fixtures. When adding features, regenerate with `mise run e2e:generate`.
+**Testing:** language-specific tests live in each package; shared E2E behavior belongs in `e2e/` fixtures. When adding features, regenerate with `mise run e2e:verify`.
 
 ---
 

@@ -226,10 +226,10 @@ cargo run -p xberg-e2e-generator -- generate --lang java
 cargo run -p xberg-e2e-generator -- generate --lang go
 ```
 
-Or use the mise task:
+Or use the mise task (it also fails on uncommitted drift):
 
 ```bash
-mise run e2e:generate
+mise run e2e:verify
 ```
 
 ## Adding New Fixtures

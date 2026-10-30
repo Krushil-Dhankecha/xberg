@@ -14,7 +14,6 @@ includes = [
   "mise-tasks/bindings.toml",
   "mise-tasks/e2e.toml",
   "mise-tasks/docs.toml",
-  "mise-tasks/demo.toml",
   "mise-tasks/benchmark.toml",
   "mise-tasks/integrations.toml",
 ]
@@ -51,7 +50,6 @@ DEPS_CSHARP_DIR = "packages/csharp/Xberg"
 [vars]
 # The xberg-io/actions revision the vendored Bats helper library was copied from. ~keep
 bats_lib_ref = "793d3a4d37a17009d91cce29f2825eda570d2abd"
-bench_fixtures = "tools/benchmark-harness/fixtures"
 
 # ---- Entry points ------------------------------------------------------------------------------
 
@@ -74,10 +72,6 @@ run = [
 description = "Build Rust core library only (debug)"
 run = [{ task = "rust:build:dev" }]
 
-[tasks."build:all"]
-description = "Build Rust core library and all language bindings (debug)"
-run = [{ task = "rust:build:dev" }, { task = "alef:build" }]
-
 [tasks.test]
 description = "Run Rust core tests"
 run = [{ task = "rust:test" }]
@@ -90,18 +84,6 @@ run = "python3 scripts/classic_ocr_cache_acceptance.py"
 [tasks."test:classic-ocr-cache:harness"]
 description = "Run fast contract tests for the classic OCR cache acceptance harness"
 run = "uv run --frozen --only-dev python -m pytest -q scripts/test_classic_ocr_cache_acceptance.py"
-
-[tasks."test:all"]
-description = "Run all test suites (Rust core + bindings)"
-run = [{ task = "test" }, { task = "test:scripts" }, "alef test"]
-
-[tasks."test:scripts"]
-description = "Run the contract tests for the repo's own shell and PowerShell scripts"
-run = [{ task = "test:scripts:bats" }, { task = "test:scripts:pester" }]
-
-[tasks."test:cov"]
-description = "Run all tests with coverage"
-run = [{ task = "rust:test:ci" }, "alef test --coverage"]
 
 [tasks.check]
 description = "Run all checks (format + lint, no modifications)"
@@ -213,24 +195,11 @@ run = [
 description = "Check if versions are synchronized (dry-run)"
 run = [{ task = "version:show" }, "python3 scripts/sync_integration_versions.py --check"]
 
-[tasks."version:set"]
-description = "Set explicit version and sync (usage: mise run version:set 4.10.0-rc.1)"
-usage = 'arg "<version>" help="The version to set, e.g. 4.10.0-rc.1"'
-run = ['alef sync-versions --set "$usage_version"', { task = "version:sync" }]
-
 # ---- alef --------------------------------------------------------------------------------------
-
-[tasks."alef:generate"]
-description = "Regenerate all Alef-managed outputs (formatting via poly, no build or snippet validation)"
-run = [{ task = "dart:format:context" }, "alef all --clean --skip-compile --skip-snippet-validation"]
 
 [tasks."alef:verify"]
 description = "Check Alef-generated files are up to date"
 run = "alef verify --exit-code"
-
-[tasks."alef:sync"]
-description = "Sync version from Cargo.toml to all manifests"
-run = "alef sync-versions"
 
 [tasks."alef:verify:readme-paths"]
 description = "Check every alef.toml readme/docs path (templates, snippets) resolves on disk"

@@ -3,70 +3,6 @@
 
 # ---- Dependency refreshes (`deps` is the shared toolchains engine, `deps:local` xberg's) -------
 
-["python:update"]
-description = "Update Python dependencies within major versions (uv sync --upgrade-package)"
-run = [{ task = "deps:local", args = ["update", "python"] }]
-
-["python:upgrade"]
-description = "Upgrade Python dependencies to latest including breaking changes (uv sync --upgrade)"
-run = [{ task = "deps:local", args = ["upgrade", "python"] }]
-
-["ruby:update"]
-description = "Update Ruby dependencies within major versions (bundle update --conservative)"
-run = [{ task = "deps:local", args = ["update", "ruby"] }]
-
-["ruby:upgrade"]
-description = "Upgrade Ruby dependencies to latest including breaking changes (bundle update --all)"
-run = [{ task = "deps:local", args = ["upgrade", "ruby"] }]
-
-["java:update"]
-description = "Update Java dependencies within major versions (mvn versions:use-next-versions)"
-run = [{ task = "deps:local", args = ["update", "java"] }]
-
-["java:upgrade"]
-description = "Upgrade Java dependencies to latest including breaking changes (mvn versions:use-latest-releases)"
-run = [{ task = "deps:local", args = ["upgrade", "java"] }]
-
-["php:update"]
-description = "Update PHP dependencies within major versions (composer update --with-dependencies)"
-run = ["mise run deps update php"]
-
-["php:upgrade"]
-description = "Upgrade PHP dependencies to latest including breaking changes (composer update --with-all-dependencies)"
-run = ["mise run deps upgrade php"]
-
-["go:update"]
-description = "Update Go dependencies within major versions (go get -u=patch + go mod tidy)"
-run = ["mise run deps update go"]
-
-["go:upgrade"]
-description = "Upgrade Go dependencies to latest including breaking changes (go get -u + go mod tidy)"
-run = ["mise run deps upgrade go"]
-
-["csharp:update"]
-description = "Update C# dependencies within major versions (dotnet outdated -u --version-lock Minor)"
-run = ["mise run deps update csharp"]
-
-["csharp:upgrade"]
-description = "Upgrade C# dependencies to latest including breaking changes (dotnet outdated -u)"
-run = ["mise run deps upgrade csharp"]
-
-["elixir:update"]
-description = "Update Elixir dependencies within major versions (mix deps.update --all)"
-run = ["mise run deps update elixir"]
-
-["elixir:upgrade"]
-description = "Upgrade Elixir dependencies to latest including breaking changes (mix hex.outdated --all + mix deps.update)"
-run = ["mise run deps upgrade elixir"]
-
-["dart:update"]
-description = "Update Dart dependencies within major versions (dart pub upgrade)"
-run = ["mise run deps update dart"]
-
-["dart:upgrade"]
-description = "Upgrade Dart dependencies to latest including breaking changes (dart pub upgrade --major-versions)"
-run = ["mise run deps upgrade dart"]
-
 # ---- Python ------------------------------------------------------------------------------------
 
 ["python:publish:archive:prepare"]
@@ -106,10 +42,6 @@ bash scripts/ci/package-go-musl-release.sh "$usage_target" "$usage_platform" "$u
 
 # ---- PHP, WASM, Java, C# -----------------------------------------------------------------------
 
-["php:build"]
-description = "Build the xberg-php native extension (cdylib)"
-run = "cargo build --locked --release -p xberg-php"
-
 ["wasm:build:all"]
 description = "Alias for rust:wasm:build:all (build all WASM targets + TS wrapper)"
 depends = ["rust:wasm:build:all"]
@@ -124,37 +56,12 @@ description = "Build the C# binding in Release configuration"
 dir = "{{config_root}}/packages/csharp/Xberg"
 run = "dotnet build --configuration Release"
 
-["csharp:format"]
-description = "Format C# binding with dotnet format"
-dir = "{{config_root}}/packages/csharp/Xberg"
-run = "dotnet format"
-
-["csharp:lint"]
-description = "Lint C# binding with dotnet format --verify-no-changes"
-dir = "{{config_root}}/packages/csharp/Xberg"
-run = "dotnet format --verify-no-changes"
-
 # ---- Kotlin/Android, Swift, Dart, Zig ----------------------------------------------------------
-
-["kotlin-android:format"]
-description = "Format Kotlin/Android binding with ktlint via gradle"
-dir = "{{config_root}}/packages/kotlin-android"
-run = "gradle ktlintFormat --no-daemon"
 
 ["kotlin-android:test"]
 description = "Run Kotlin/Android binding tests"
 dir = "{{config_root}}/packages/kotlin-android"
 run = ["cargo build --locked --release -p xberg-ffi", "gradle test --no-daemon"]
-
-["swift:format"]
-description = "Format Swift binding with swift format"
-dir = "{{config_root}}/packages/swift"
-run = "swift format --in-place --recursive Sources Tests"
-
-["swift:lint"]
-description = "Lint Swift binding with swift format lint"
-dir = "{{config_root}}/packages/swift"
-run = "swift format lint --recursive Sources Tests"
 
 ["swift:test"]
 description = "Run Swift binding tests"
@@ -169,25 +76,10 @@ run = ["cd packages/dart && dart pub get", "cd e2e/dart && dart pub get --enforc
 description = "Setup Dart binding (codegen + native lib build + post-processing via alef)"
 run = "alef build --lang dart --release"
 
-["dart:format"]
-description = "Format Dart binding with dart format"
-dir = "{{config_root}}/packages/dart"
-run = "dart format ."
-
 ["dart:test"]
 description = "Run Dart binding tests"
 dir = "{{config_root}}/packages/dart"
 run = ["cargo build --locked --release --manifest-path rust/Cargo.toml", "dart pub get", "dart test"]
-
-["zig:format"]
-description = "Format Zig binding with zig fmt"
-dir = "{{config_root}}/packages/zig"
-run = "zig fmt src"
-
-["zig:lint"]
-description = "Check Zig formatting with zig fmt --check"
-dir = "{{config_root}}/packages/zig"
-run = "zig fmt --check src"
 
 ["zig:test"]
 description = "Run Zig binding tests"

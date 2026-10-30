@@ -4,10 +4,6 @@
 description = "Check the docs-site changelog carries every release section from CHANGELOG.md"
 run = "python3 scripts/ci/check-changelog-sync.py"
 
-["docs:snippets:validate"]
-description = "Validate all snippet entries via alef"
-run = "alef snippets check"
-
 # --strict fails the run when a language's validator reports Unavailable (or Skip/Downgraded)
 # instead of silently passing. Without it, a language whose toolchain isn't on the runner's PATH
 # (TypeScriptValidator::is_available() etc. do a global `which`, never node_modules/.bin) is
