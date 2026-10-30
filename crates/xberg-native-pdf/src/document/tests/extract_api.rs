@@ -170,6 +170,48 @@ fn test_form_placed_verdict_is_not_reused_across_pages() {
     );
 }
 
+/// Page 1 keeps its own placed text, so it keeps the placed body of the shared form
+/// without a verdict of its own. Page 2 paints a copy of that body outside any
+/// scope, so the form is a duplicate overlay there. The spans that page 1 kept
+/// must not be reused on page 2, in either page order.
+#[test]
+fn test_form_kept_under_a_page_verdict_is_not_reused_across_pages() {
+    let shared: Vec<String> = (0..30)
+        .map(|i| format!("Paragraph line number {i} of the shared body text"))
+        .collect();
+    let other: Vec<String> = (0..30)
+        .map(|i| format!("Unrelated line number {i} of the page text"))
+        .collect();
+    let form = format!("/PlacedPDF /MC0 BDC\n{}EMC\n", text_lines_stream(&shared, 29, 771));
+    let page_a = format!(
+        "/PlacedPDF /MC9 BDC\n{}EMC\n/Fm0 Do\n",
+        text_lines_stream(&other, 20, 780)
+    );
+    let page_b = format!("{}/Fm0 Do\n", text_lines_stream(&shared, 20, 780));
+    let pdf = build_two_pages_sharing_form_pdf(&page_a, &page_b, &form);
+
+    let fresh = PdfDocument::from_bytes(pdf.clone()).expect("parse pdf");
+    let alone = fresh.extract_text(1).unwrap();
+    assert_eq!(
+        alone.matches("Paragraph line number 7 ").count(),
+        1,
+        "page 2 alone keeps a duplicate form body: {alone:?}"
+    );
+
+    let doc = PdfDocument::from_bytes(pdf).expect("parse pdf");
+    let first = doc.extract_text(0).unwrap();
+    assert!(
+        first.contains("Paragraph line number 7 "),
+        "page 1 lost the form body: {first:?}"
+    );
+    let second = doc.extract_text(1).unwrap();
+    assert_eq!(
+        second.matches("Paragraph line number 7 ").count(),
+        1,
+        "page 2 reused the form spans that page 1 kept: {second:?}"
+    );
+}
+
 /// Page 1 paints a form with a placed body, and that form paints a second form
 /// whose text is kept under the first form's verdict. Page 2 paints the second
 /// form directly, next to its own copy of that text, so the form is a duplicate

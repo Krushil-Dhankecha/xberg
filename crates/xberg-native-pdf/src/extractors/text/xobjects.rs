@@ -395,10 +395,14 @@ impl<'doc> TextExtractor<'doc> {
                 } else {
                     Self::scan_placed_text(&stream_data)
                 };
+                // A form with the tag is kept or dropped by the verdict of the page that
+                // paints it, whether it judges itself or follows the page. ~keep
                 let verdicts_before = self.form_placed_verdicts;
+                if Self::has_placed_tag(&stream_data) {
+                    self.form_placed_verdicts += 1;
+                }
                 let form_scan_made = form_scan.is_some();
                 if let Some(scan) = form_scan {
-                    self.form_placed_verdicts += 1;
                     self.form_verdict_depth += 1;
                     self.placed_pdf_keep = Self::placed_scan_dominates(&scan, self.page_outside_text());
                 }
@@ -528,8 +532,8 @@ impl<'doc> TextExtractor<'doc> {
                 // We still require `has_own_resources` so that font lookups are
                 // self-contained; XObjects that inherit page-level fonts would
                 // produce spans whose glyph mappings depend on caller context. ~keep
-                // A form whose run made a page-dependent /PlacedPDF verdict, or ran inside such a
-                // form, is not cached: another page would reuse spans judged against this page's text. ~keep
+                // A form whose run held a /PlacedPDF tag, or ran inside a form that made a verdict, is not
+                // cached: another page would reuse spans kept or dropped by this page's verdict. ~keep
                 if has_own_resources
                     && self.extract_spans
                     && !has_filters

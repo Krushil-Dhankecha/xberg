@@ -109,11 +109,16 @@ impl<'doc> TextExtractor<'doc> {
         Self::scan_placed_text(content_stream).is_some_and(|scan| Self::placed_scan_dominates(&scan, outside))
     }
 
+    /// Whether a content stream mentions the `/PlacedPDF` tag at all.
+    pub(super) fn has_placed_tag(content_stream: &[u8]) -> bool {
+        content_stream.windows(b"PlacedPDF".len()).any(|w| w == b"PlacedPDF")
+    }
+
     /// Bucket the text-show operands of one content stream by `/PlacedPDF` scope.
     /// Returns `None` when the stream carries no placed tag or does not parse.
     pub(super) fn scan_placed_text(content_stream: &[u8]) -> Option<PlacedScan> {
         // Gate: only streams that actually carry the InDesign tag pay for a parse. ~keep
-        if !content_stream.windows(b"PlacedPDF".len()).any(|w| w == b"PlacedPDF") {
+        if !Self::has_placed_tag(content_stream) {
             return None;
         }
         Self::scan_text_buckets(content_stream)
