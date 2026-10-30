@@ -1727,7 +1727,7 @@ async fn extract_mixed_ocr_native_with_layout_inputs(
             {
                 let recovered_tables = !tables.is_empty();
                 let recovered_text_is_empty = text.trim().is_empty();
-                if should_adopt_xobject_retry_text(page_text, &text) {
+                if should_adopt_xobject_retry_text(&page_text, &text) {
                     // The render's paragraphs, confidence and word count describe the blank
                     // render, not the recovered text.
                     let recovered_paragraphs =

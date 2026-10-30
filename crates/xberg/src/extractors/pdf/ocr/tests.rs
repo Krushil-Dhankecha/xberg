@@ -8238,6 +8238,7 @@ Name: ___
             source_dpi: None,
             known_full_page_scan: false,
             single_block_pages: Some(std::sync::Arc::new(std::collections::HashSet::from([1]))),
+            pruned_text_sink: None,
         };
         let config = ExtractionConfig {
             use_cache: false,

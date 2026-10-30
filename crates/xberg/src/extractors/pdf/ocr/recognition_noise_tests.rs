@@ -1135,6 +1135,119 @@ async fn the_page_verdict_of_a_scanned_pdf_counts_the_lines_the_engine_removed()
     );
 }
 
+/// A backend that reads a page as blank after its confidence rule removed every line, and counts
+/// the images it is asked to read (#2312).
+#[cfg(feature = "pdf")]
+struct CountingPrunedBackend {
+    name: &'static str,
+    removed: &'static str,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(feature = "pdf")]
+impl crate::plugins::Plugin for CountingPrunedBackend {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn version(&self) -> String {
+        "1.0.0".to_string()
+    }
+    fn initialize(&self) -> crate::Result<()> {
+        Ok(())
+    }
+    fn shutdown(&self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "pdf")]
+#[async_trait::async_trait]
+impl crate::plugins::OcrBackend for CountingPrunedBackend {
+    async fn process_image(
+        &self,
+        _image_bytes: &[u8],
+        _config: &crate::core::config::OcrConfig,
+    ) -> crate::Result<crate::ExtractedDocument> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(crate::ExtractedDocument {
+            content: String::new(),
+            mime_type: std::borrow::Cow::Borrowed("text/plain"),
+            ocr_internal_document: Some(crate::types::internal::InternalDocument {
+                ocr_pruned_text: self.removed.to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
+    fn supports_language(&self, _language: &str) -> bool {
+        true
+    }
+    fn backend_type(&self) -> crate::plugins::OcrBackendType {
+        crate::plugins::OcrBackendType::Custom
+    }
+}
+
+/// Number of backend calls for the one scanned page of a PDF whose backend reports an empty page
+/// and `removed` as the text of the lines it took out.
+#[cfg(feature = "pdf")]
+async fn backend_calls_for_a_blank_page_with_removed_lines(name: &'static str, removed: &'static str) -> usize {
+    use crate::core::config::{ExtractInput, ExtractionConfig, OcrConfig};
+
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let _ = crate::plugins::unregister_ocr_backend(name);
+    crate::plugins::register_ocr_backend(std::sync::Arc::new(CountingPrunedBackend {
+        name,
+        removed,
+        calls: calls.clone(),
+    }))
+    .expect("the stub backend must register");
+    let config = ExtractionConfig {
+        use_cache: false,
+        ocr: Some(OcrConfig {
+            backend: name.to_string(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let bytes = std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ocr/scanned_hello.pdf"),
+    )
+    .expect("fixture must exist");
+    let result = crate::extract(
+        ExtractInput::from_bytes(bytes, "application/pdf", Some("scanned_hello.pdf".to_string())),
+        &config,
+    )
+    .await;
+    let _ = crate::plugins::unregister_ocr_backend(name);
+    result.expect("extraction must succeed");
+    calls.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The retry on the embedded images runs only for a page that read as blank. A page whose lines
+/// were all removed was not blank: the engine read a full page of text. With the removed text put
+/// back the page needs no retry (one backend call); with nothing removed the blank page is
+/// retried on its images (more calls). Reading the kept text alone at the retry trigger turns
+/// the first assertion red (GH#2312). ~keep
+#[cfg(feature = "pdf")]
+#[tokio::test]
+#[serial_test::serial]
+async fn the_image_retry_trigger_reads_the_lines_the_engine_removed() {
+    let removed = "The committee met on Tuesday to review the annual budget and approved the final report. \
+                   Members agreed that the proposal was sound and asked the treasurer for the report.";
+
+    let calls_without_removed_lines = backend_calls_for_a_blank_page_with_removed_lines("gh2312-retry-none", "").await;
+    let calls_with_removed_lines = backend_calls_for_a_blank_page_with_removed_lines("gh2312-retry-removed", removed).await;
+
+    assert!(
+        calls_without_removed_lines > 1,
+        "control: a blank page is retried on its embedded images, got {calls_without_removed_lines} calls"
+    );
+    assert_eq!(
+        calls_with_removed_lines, 1,
+        "a page whose lines were all removed is not blank, so no retry runs"
+    );
+}
+
 /// A stage is scored on what the engine returned: the kept text plus the lines the confidence
 /// rule removed. Stage A reads a clean sentence and removes a block of fragments, so its full
 /// text falls under the stage threshold and the pipeline takes stage B. If the stage loop

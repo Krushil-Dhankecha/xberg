@@ -371,7 +371,12 @@ pub struct InternalDocument {
     #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
     pub ocr_text_claimed_by_tables: bool,
 
-    /// The text of the hOCR lines that the OCR confidence rule removed from this page (#2312), so the stage score, the image retry trigger and the page verdict judge the page as the engine returned it. Never crosses the plugin-bridge JSON wire format and never reaches the public output.
+    /// Text of the hOCR lines that the OCR confidence rule removed from this page (#2312).
+    /// Internal carrier: not part of the public contract, never serialized, never in any output.
+    // `pub` only because struct-update syntax in separate test crates needs every field visible;
+    // `doc(hidden)` and `alef(skip)` keep it off the docs and the bindings. ~keep
+    #[doc(hidden)]
+    #[cfg_attr(alef, alef(skip))]
     #[serde(skip)]
     #[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
     pub ocr_pruned_text: String,
