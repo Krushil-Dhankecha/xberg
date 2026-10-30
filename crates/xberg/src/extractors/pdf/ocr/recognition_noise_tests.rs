@@ -1140,7 +1140,7 @@ async fn the_page_verdict_of_a_scanned_pdf_counts_the_lines_the_engine_removed()
 #[cfg(feature = "pdf")]
 struct CountingPrunedBackend {
     name: &'static str,
-    removed: &'static str,
+    removed: String,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -1173,7 +1173,7 @@ impl crate::plugins::OcrBackend for CountingPrunedBackend {
             content: String::new(),
             mime_type: std::borrow::Cow::Borrowed("text/plain"),
             ocr_internal_document: Some(crate::types::internal::InternalDocument {
-                ocr_pruned_text: self.removed.to_string(),
+                ocr_pruned_text: self.removed.clone(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1190,14 +1190,14 @@ impl crate::plugins::OcrBackend for CountingPrunedBackend {
 /// Number of backend calls for the one scanned page of a PDF whose backend reports an empty page
 /// and `removed` as the text of the lines it took out.
 #[cfg(feature = "pdf")]
-async fn backend_calls_for_a_blank_page_with_removed_lines(name: &'static str, removed: &'static str) -> usize {
+async fn backend_calls_for_a_blank_page_with_removed_lines(name: &'static str, removed: &str) -> usize {
     use crate::core::config::{ExtractInput, ExtractionConfig, OcrConfig};
 
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let _ = crate::plugins::unregister_ocr_backend(name);
     crate::plugins::register_ocr_backend(std::sync::Arc::new(CountingPrunedBackend {
         name,
-        removed,
+        removed: removed.to_string(),
         calls: calls.clone(),
     }))
     .expect("the stub backend must register");
@@ -1232,11 +1232,15 @@ async fn backend_calls_for_a_blank_page_with_removed_lines(name: &'static str, r
 #[tokio::test]
 #[serial_test::serial]
 async fn the_image_retry_trigger_reads_the_lines_the_engine_removed() {
+    // Past the length under which the retry also probes the page raster for ink, so only the
+    // text decides.
     let removed = "The committee met on Tuesday to review the annual budget and approved the final report. \
-                   Members agreed that the proposal was sound and asked the treasurer for the report.";
+                   Members agreed that the proposal was sound and asked the treasurer for the report. "
+        .repeat(3);
+    assert!(removed.chars().filter(|c| !c.is_whitespace()).count() > super::rendering::MAX_INK_PROBE_TEXT_CHARS);
 
     let calls_without_removed_lines = backend_calls_for_a_blank_page_with_removed_lines("gh2312-retry-none", "").await;
-    let calls_with_removed_lines = backend_calls_for_a_blank_page_with_removed_lines("gh2312-retry-removed", removed).await;
+    let calls_with_removed_lines = backend_calls_for_a_blank_page_with_removed_lines("gh2312-retry-removed", &removed).await;
 
     assert!(
         calls_without_removed_lines > 1,
