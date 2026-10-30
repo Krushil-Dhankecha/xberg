@@ -89,6 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **(pdf): Keep a replacement character for each Type 0 glyph that has no Unicode value.**
+  Pages that lose glyphs this way now reach the OCR fallback instead of returning the surviving characters as clean text. With OCR off, the loss shows as U+FFFD in the text. (#2299, #2309)
 - **(pdf): Cache Type 3 font-mapping provenance during text extraction.**
   Repeated glyphs retain their fallback markers without rescanning the font for every character. (#2307)
 - **(doc): Preserve superscript and subscript annotations in footnotes and comments.**

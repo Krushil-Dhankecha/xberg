@@ -869,6 +869,14 @@ fn scanned_page_quality_gate_enabled(config: &ExtractionConfig) -> bool {
         .unwrap_or(config.ocr.is_some())
 }
 
+/// True when the native text is blank or holds only U+FFFD. The extractor keeps one U+FFFD for
+/// each Type0 glyph without a Unicode value, so a page that lost every glyph reads as U+FFFD
+/// and must count as absent text. ~keep
+#[cfg(any(feature = "ocr", feature = "ocr-pipeline"))]
+fn native_text_holds_no_content(native_text: &str) -> bool {
+    native_text.chars().all(|c| c.is_whitespace() || c == '\u{FFFD}')
+}
+
 /// Whether the `Auto` near-empty fallback branch runs for this document.
 ///
 /// `ExtractionConfig::ocr_near_empty_fallback` is the caller's explicit answer:
@@ -886,7 +894,10 @@ fn near_empty_ocr_fallback_applies(config: &ExtractionConfig, native_text: &str)
     match config.ocr_near_empty_fallback {
         Some(false) => false,
         Some(true) => config.ocr.is_some() || automatic_ocr_backend_is_registered(),
-        None => config.ocr.is_some() || (native_text.trim().is_empty() && automatic_ocr_backend_is_registered()),
+        None => {
+            config.ocr.is_some()
+                || (native_text_holds_no_content(native_text) && automatic_ocr_backend_is_registered())
+        }
     }
 }
 
