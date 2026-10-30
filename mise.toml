@@ -112,7 +112,7 @@ run = ["cargo clean", "alef clean", "rm -rf coverage.lcov dist/ .alef/"]
 description = "Generate all (or selected) test fixtures + ground-truth sidecars"
 dir = "{{config_root}}/tools/generate_test_fixtures"
 usage = 'arg "[fixture]..." default="all" help="Fixture groups to generate"'
-run = "uv run python -m generate_test_fixtures ${usage_fixture:-all}"
+run = "uv run --locked python -m generate_test_fixtures ${usage_fixture:-all}"
 
 [tasks."fixtures:test"]
 description = "Run the fixture generator's smoke test suite"
