@@ -47,7 +47,7 @@ This installs the toolchain, the dependencies, and the pre-commit hooks via `pol
 | `mise run format` | Format all code                                 |
 | `mise run check`  | Combined lint + format check (no modifications) |
 
-For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run python:e2e`, `mise run swift:test`, etc.
+For language-specific commands, use the namespace pattern: `mise run rust:test`, `mise run python:e2e`, `mise run swift:e2e`, etc.
 
 When you change the classic OCR model catalog or the cache code behind `xberg cache seed-classic-ocr`, run
 `mise run test:classic-ocr-cache`. It builds the CLI, downloads every pinned PaddleOCR and Sceptre artifact, and

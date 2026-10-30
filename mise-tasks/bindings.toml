@@ -56,17 +56,7 @@ description = "Build the C# binding in Release configuration"
 dir = "{{config_root}}/packages/csharp/Xberg"
 run = "dotnet build --configuration Release"
 
-# ---- Kotlin/Android, Swift, Dart, Zig ----------------------------------------------------------
-
-["kotlin-android:test"]
-description = "Run Kotlin/Android binding tests"
-dir = "{{config_root}}/packages/kotlin-android"
-run = ["cargo build --locked --release -p xberg-ffi", "gradle test --no-daemon"]
-
-["swift:test"]
-description = "Run Swift binding tests"
-dir = "{{config_root}}/packages/swift"
-run = ["cargo build --locked --release --manifest-path rust/Cargo.toml", "swift test"]
+# ---- Dart --------------------------------------------------------------------------------------
 
 ["dart:format:context"]
 description = "Resolve Dart package language versions before formatting generated output"
@@ -75,13 +65,3 @@ run = ["cd packages/dart && dart pub get", "cd e2e/dart && dart pub get --enforc
 ["dart:setup"]
 description = "Setup Dart binding (codegen + native lib build + post-processing via alef)"
 run = "alef build --lang dart --release"
-
-["dart:test"]
-description = "Run Dart binding tests"
-dir = "{{config_root}}/packages/dart"
-run = ["cargo build --locked --release --manifest-path rust/Cargo.toml", "dart pub get", "dart test"]
-
-["zig:test"]
-description = "Run Zig binding tests"
-dir = "{{config_root}}/packages/zig"
-run = ["cargo build --locked --release -p xberg-ffi", "zig build test"]

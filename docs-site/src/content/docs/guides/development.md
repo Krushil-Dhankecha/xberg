@@ -73,18 +73,9 @@ mise run alef:build           # Compile every binding
 mise run test:bindings        # Run every binding test suite
 ```
 
-A few native bindings expose their own unit-test task:
-
-```bash title="Terminal"
-mise run swift:test
-mise run zig:test
-mise run dart:test
-mise run kotlin-android:test
-```
-
-For all other languages the cross-language check is the e2e suite — `mise run python:e2e`,
-`mise run node:e2e`, `mise run go:e2e`, and so on (see [End-to-end Test
-Suites](#end-to-end-test-suites)).
+Each `mise run <lang>:e2e` task (`alef test --e2e --lang <lang>`) runs that binding's own
+package tests (`[crates.test.<lang>]` in `alef.toml`) before its e2e suite — `mise run python:e2e`,
+`mise run swift:e2e`, and so on (see [End-to-end Test Suites](#end-to-end-test-suites)).
 
 The `RUST_LOG` env var propagates into every binding — the Rust core logs through the
 host process's stderr:

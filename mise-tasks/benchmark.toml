@@ -19,19 +19,3 @@ run = [
 ["benchmark:validate:layout-annotations"]
 description = "Validate independent layout ground-truth preservation and identity checks"
 run = "uv run --no-sync python -m pytest -q tools/benchmark-harness/tests/test_import_omnidocbench.py"
-
-["benchmark:test"]
-description = "Run benchmark harness unit and integration tests"
-run = "cargo test --locked -p benchmark-harness"
-
-["benchmark:local"]
-description = "Local head-to-head PDF benchmark: xberg vs liteparse (+docling if installed) with per-document gap report"
-run = "bash tools/benchmark-harness/scripts/bench_local.sh"
-
-["benchmark:corpus:cache:publish"]
-description = "Verify and publish the content-addressed reference corpus cache. Run after a corpus rebuild + build_corpus.py --stage materialize."
-run = "scripts/benchmarks/publish-corpus-cache.sh"
-
-["benchmark:corpus:cache:restore"]
-description = "Restore the verified reference corpus cache for the current manifest"
-run = "scripts/benchmarks/restore-corpus-cache.sh"
