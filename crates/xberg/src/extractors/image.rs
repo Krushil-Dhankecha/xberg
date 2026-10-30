@@ -2495,7 +2495,7 @@ async fn read_again_as_han_where(
     backend: &std::sync::Arc<dyn crate::plugins::OcrBackend>,
     image_bytes: &std::sync::Arc<Vec<u8>>,
     config: &crate::core::config::OcrConfig,
-    first_pass: crate::types::ExtractedDocument,
+    first_pass: &crate::types::ExtractedDocument,
     is_han: impl FnOnce(&[String]) -> bool + Send + 'static,
 ) -> crate::Result<HanSecondPass> {
     use crate::ocr_script::{Script, languages_are_wildcard, languages_cover_script, push_language};
