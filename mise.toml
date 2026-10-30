@@ -135,7 +135,7 @@ run = "uv run python -m generate_test_fixtures ${usage_fixture:-all}"
 [tasks."fixtures:test"]
 description = "Run the fixture generator's smoke test suite"
 dir = "{{config_root}}/tools/generate_test_fixtures"
-run = "uv run --extra dev pytest -q"
+run = "uv run --locked --extra dev pytest -q"
 
 # ---- Verification gates ------------------------------------------------------------------------
 
