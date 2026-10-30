@@ -164,11 +164,18 @@ mod tests {
             byte_end: text.len(),
             page_number: 1,
         }];
-        let before = boundaries.clone();
+        let before: Vec<(usize, usize, u32)> = boundaries
+            .iter()
+            .map(|b| (b.byte_start, b.byte_end, b.page_number))
+            .collect();
 
         assert_eq!(strip_text(&mut text, Some(&mut boundaries)), 0);
         assert_eq!(text, "plain \u{e9} text");
-        assert_eq!(boundaries, before);
+        let after: Vec<(usize, usize, u32)> = boundaries
+            .iter()
+            .map(|b| (b.byte_start, b.byte_end, b.page_number))
+            .collect();
+        assert_eq!(after, before);
     }
 
     #[test]
@@ -223,6 +230,7 @@ mod tests {
             markdown: format!("| a{MARK} | b |"),
             page_number: 1,
             bounding_box: None,
+            ..Table::default()
         };
 
         assert_eq!(strip_table(&mut table), 2);
