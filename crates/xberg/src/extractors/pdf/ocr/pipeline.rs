@@ -5193,6 +5193,14 @@ async fn run_ocr_pipeline_stages(
                     merge_ocr_page_failures(stage_page_failures, stage_doc.ocr_page_failures.clone());
                 }
 
+                super::scoring::zc_dbg_stage(
+                    &stage.backend,
+                    inputs.page_index_offset,
+                    &text,
+                    mean_conf,
+                    score,
+                    &pipeline.quality_thresholds,
+                );
                 if score >= pipeline.quality_thresholds.pipeline_min_quality {
                     // ~keep Attach prior-stage diagnostics before this accepted-stage early
                     // return; otherwise successful fallback silently erases why it ran.
